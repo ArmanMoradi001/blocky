@@ -1,5 +1,26 @@
 use sha2::{Digest, Sha256};
 use std::{iter::chain, time::SystemTime};
+
+pub enum BlockSearch {
+    SearchByIndex(usize),
+    SearchByNonce(i32),
+    SearchByPreviousHash(Vec<u8>),
+    SearchByTimeStamp(u128),
+    SearchByTransactions(Vec<u8>),
+    SearchByHash(Vec<u8>),
+}
+
+pub enum BlockSearchResult<'a> {
+    Success(&'a Block),
+    FailOfEmptyBlock,
+    FailOfIndex(usize),
+    FailOfNonce(i32),
+    FailOfPreviousHash(Vec<u8>),
+    FailOfTimeStamp(u128),
+    FailOfTransactions(Vec<u8>),
+    FailOfHash(Vec<u8>),
+}
+
 #[derive(Debug)]
 pub struct Block {
     nonce: i32,
@@ -80,5 +101,60 @@ impl BlockChain {
         }
 
         &self.chain[0]
+    }
+
+    pub fn block_search(&self, search: BlockSearch) -> BlockSearchResult {
+        for block in self.chain.iter() {
+            match search {
+                BlockSearch::SearchByIndex(index) => {
+                    if index == self.chain.iter().position(|b| std::ptr::eq(b, block)).unwrap() {
+                        return BlockSearchResult::Success(block);
+                    }
+                }
+
+                BlockSearch::SearchByNonce(nonce) => {
+                    if nonce == block.nonce {
+                        return BlockSearchResult::Success(block);
+                    }
+                }
+
+                BlockSearch::SearchByPreviousHash(ref phash) => {
+                    if block.previous_hash == *phash {
+                        return BlockSearchResult::Success(block);
+                    }
+                }
+
+                BlockSearch::SearchByTimeStamp(time_stamp) => {
+                    if block.time_stamp == time_stamp {
+                        return BlockSearchResult::Success(block);
+                    }
+                }
+
+                BlockSearch::SearchByTransactions(ref tx) => {
+                    if block.transactions.contains(tx) {
+                        return BlockSearchResult::Success(block);
+                    }
+                }
+
+                BlockSearch::SearchByHash(ref hash) => {
+                    if block.hash() == *hash {
+                        return BlockSearchResult::Success(block);
+                    }
+                }
+            }
+        }
+
+        if self.chain.is_empty() {
+            return BlockSearchResult::FailOfEmptyBlock;
+        }
+
+        match search {
+            BlockSearch::SearchByIndex(index) => BlockSearchResult::FailOfIndex(index),
+            BlockSearch::SearchByNonce(nonce) => BlockSearchResult::FailOfNonce(nonce),
+            BlockSearch::SearchByPreviousHash(phash) => BlockSearchResult::FailOfPreviousHash(phash),
+            BlockSearch::SearchByTimeStamp(time_stamp) => BlockSearchResult::FailOfTimeStamp(time_stamp),
+            BlockSearch::SearchByTransactions(tx) => BlockSearchResult::FailOfTransactions(tx),
+            BlockSearch::SearchByHash(hash) => BlockSearchResult::FailOfHash(hash),
+        }
     }
 }
