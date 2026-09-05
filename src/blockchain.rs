@@ -1,6 +1,14 @@
 use sha2::{Digest, Sha256};
 use std::{iter::chain, time::SystemTime};
 
+
+
+    pub trait Serialization<T>{
+         fn serialization(&self) -> Vec<u8>;
+
+         fn deserialization(bytes: Vec<u8>)-> T; 
+    }
+
 pub enum BlockSearch {
     SearchByIndex(usize),
     SearchByNonce(i32),
@@ -157,4 +165,7 @@ impl BlockChain {
             BlockSearch::SearchByHash(hash) => BlockSearchResult::FailOfHash(hash),
         }
     }
+
+
+
 }
