@@ -1,6 +1,8 @@
 use sha2::{Digest, Sha256};
 use std::{iter::chain, time::SystemTime};
 
+use crate::transaction::Transaction;
+
 pub trait Serialization<T> {
     fn serialization(&self) -> Vec<u8>;
 
@@ -89,8 +91,12 @@ impl BlockChain {
     }
 
     pub fn create_block(&mut self, nonce: i32, previous_hash: Vec<u8>) {
-        let b = Block::new(nonce, previous_hash);
-        self.chain.push(b);
+        let mut block = Block::new(nonce, previous_hash);
+        for tx in self.transactions_pool.iter(){
+            block.transactions.push(tx.clone());
+        }
+        self.transactions_pool.clear();
+        self.chain.push(block);
     }
 
     pub fn print_blockchain(&self) {
@@ -172,5 +178,16 @@ impl BlockChain {
             BlockSearch::SearchByTransactions(tx) => BlockSearchResult::FailOfTransactions(tx),
             BlockSearch::SearchByHash(hash) => BlockSearchResult::FailOfHash(hash),
         }
+    }
+
+
+    pub fn add_transaction(&mut self, tx: &impl Serialization<Transaction> ){
+        for tx_in_pool in self.transactions_pool.iter(){
+            if tx_in_pool == tx.serialization(){
+                return;;
+            }
+        }
+
+        self.transactions_pool.push(tx.serialization());
     }
 }
