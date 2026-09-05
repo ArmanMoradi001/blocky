@@ -1,13 +1,11 @@
 use sha2::{Digest, Sha256};
 use std::{iter::chain, time::SystemTime};
 
+pub trait Serialization<T> {
+    fn serialization(&self) -> Vec<u8>;
 
-
-    pub trait Serialization<T>{
-         fn serialization(&self) -> Vec<u8>;
-
-         fn deserialization(bytes: Vec<u8>)-> T; 
-    }
+    fn deserialization(bytes: Vec<u8>) -> T;
+}
 
 pub enum BlockSearch {
     SearchByIndex(usize),
@@ -115,7 +113,13 @@ impl BlockChain {
         for block in self.chain.iter() {
             match search {
                 BlockSearch::SearchByIndex(index) => {
-                    if index == self.chain.iter().position(|b| std::ptr::eq(b, block)).unwrap() {
+                    if index
+                        == self
+                            .chain
+                            .iter()
+                            .position(|b| std::ptr::eq(b, block))
+                            .unwrap()
+                    {
                         return BlockSearchResult::Success(block);
                     }
                 }
@@ -159,13 +163,14 @@ impl BlockChain {
         match search {
             BlockSearch::SearchByIndex(index) => BlockSearchResult::FailOfIndex(index),
             BlockSearch::SearchByNonce(nonce) => BlockSearchResult::FailOfNonce(nonce),
-            BlockSearch::SearchByPreviousHash(phash) => BlockSearchResult::FailOfPreviousHash(phash),
-            BlockSearch::SearchByTimeStamp(time_stamp) => BlockSearchResult::FailOfTimeStamp(time_stamp),
+            BlockSearch::SearchByPreviousHash(phash) => {
+                BlockSearchResult::FailOfPreviousHash(phash)
+            }
+            BlockSearch::SearchByTimeStamp(time_stamp) => {
+                BlockSearchResult::FailOfTimeStamp(time_stamp)
+            }
             BlockSearch::SearchByTransactions(tx) => BlockSearchResult::FailOfTransactions(tx),
             BlockSearch::SearchByHash(hash) => BlockSearchResult::FailOfHash(hash),
         }
     }
-
-
-
 }

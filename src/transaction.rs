@@ -1,44 +1,42 @@
 use crate::blockchain::Serialization;
-pub struct Transaction{
+use core::fmt;
+use std::fmt::{Display, Formatter};
 
+#[derive(Debug)]
+pub struct Transaction {
     sender_address: Vec<u8>,
     reciever_address: Vec<u8>,
-    value: u64
+    value: u64,
 }
 
-
-impl Transaction{
-
-    pub fn new(sender: Vec<u8>, reciever: Vec<u8>, value: u64) -> Self{
-        Transaction{
+impl Transaction {
+    pub fn new(sender: Vec<u8>, reciever: Vec<u8>, value: u64) -> Self {
+        Transaction {
             sender_address: sender,
             reciever_address: reciever,
-            value
+            value,
         }
     }
 }
 
-
-impl Serialization<Transaction> for Transaction{
-
+impl Serialization<Transaction> for Transaction {
     fn serialization(&self) -> Vec<u8> {
-    let mut bin = Vec::new();
+        let mut bin = Vec::new();
 
-    let sender_len = self.sender_address.len() as u64;
-    bin.extend(sender_len.to_be_bytes());
-    bin.extend(&self.sender_address);
+        let sender_len = self.sender_address.len() as u64;
+        bin.extend(sender_len.to_be_bytes());
+        bin.extend(&self.sender_address);
 
-    let receiver_len = self.reciever_address.len() as u64;
-    bin.extend(receiver_len.to_be_bytes());
-    bin.extend(&self.reciever_address);
+        let receiver_len = self.reciever_address.len() as u64;
+        bin.extend(receiver_len.to_be_bytes());
+        bin.extend(&self.reciever_address);
 
-    bin.extend(self.value.to_be_bytes());
+        bin.extend(self.value.to_be_bytes());
 
-    bin
+        bin
     }
 
-
-    fn deserialization(bytes: Vec<u8>)-> Transaction {
+    fn deserialization(bytes: Vec<u8>) -> Transaction {
         let mut pos = 0;
 
         let need = |pos: usize, n: usize, what: &str| {
@@ -52,9 +50,7 @@ impl Serialization<Transaction> for Transaction{
 
         // sender_len: u64 BE
         need(pos, 8, "sender_len");
-        let sender_len = u64::from_be_bytes(
-            bytes[pos..pos + 8].try_into().unwrap(),
-        ) as usize;
+        let sender_len = u64::from_be_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
         pos += 8;
 
         // sender_address
@@ -64,9 +60,7 @@ impl Serialization<Transaction> for Transaction{
 
         // receiver_len: u64 BE
         need(pos, 8, "receiver_len");
-        let receiver_len = u64::from_be_bytes(
-            bytes[pos..pos + 8].try_into().unwrap(),
-        ) as usize;
+        let receiver_len = u64::from_be_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
         pos += 8;
 
         // receiver_address
@@ -92,6 +86,18 @@ impl Serialization<Transaction> for Transaction{
             value,
         }
     }
+}
 
-
+impl fmt::Display for Transaction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}\n Sender Address: {:?}\n Reciever Address: {:?}\n Value: {:?}\n {} ",
+            "-".repeat(40),
+            self.sender_address,
+            self.reciever_address,
+            self.value,
+            "-".repeat(40)
+        )
+    }
 }
