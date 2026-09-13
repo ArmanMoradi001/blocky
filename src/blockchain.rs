@@ -1,6 +1,7 @@
 use sha2::{Digest, Sha256};
 use std::{iter::chain, time::SystemTime};
 
+
 use crate::transaction::Transaction;
 
 pub trait Serialization<T> {
@@ -8,6 +9,7 @@ pub trait Serialization<T> {
 
     fn deserialization(bytes: Vec<u8>) -> T;
 }
+
 
 pub enum BlockSearch {
     SearchByIndex(usize),
@@ -183,7 +185,7 @@ impl BlockChain {
 
     pub fn add_transaction(&mut self, tx: &impl Serialization<Transaction> ){
         for tx_in_pool in self.transactions_pool.iter(){
-            if tx_in_pool == tx.serialization(){
+            if *tx_in_pool == tx.serialization(){
                 return;;
             }
         }
