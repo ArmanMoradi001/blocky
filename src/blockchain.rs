@@ -1,8 +1,9 @@
 use hex;
 use sha2::{Digest, Sha256};
-use std::ops::AddAssign;
+use std::ops::{AddAssign, Index};
 use std::time::Instant;
 use std::{iter::chain, time::SystemTime};
+use std::cmp::PartialEq;
 
 use crate::transaction::Transaction;
 
@@ -15,6 +16,28 @@ pub trait Serialization<T> {
 impl AddAssign<i32> for Block {
     fn add_assign(&mut self, rhs: i32) {
         self.nonce += rhs;
+    }
+}
+impl PartialEq for Block{
+    fn eq(&self, other: &Block) -> bool {
+        
+        self.hash() == other.hash()
+    }
+}
+
+
+impl Index<usize> for BlockChain {
+    type Output = Block;
+    fn index(&self, idx: usize) -> &Self::Output {
+        let res = self.chain.get(idx);
+        match res {
+            Some(block) => {
+                return block;
+            }
+            None => {
+                panic!("index out of range for the chain");
+            }
+        }
     }
 }
 

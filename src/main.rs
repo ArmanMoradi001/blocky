@@ -41,5 +41,11 @@ pub fn get_block_search_result(result: BlockSearchResult) {
 }
 fn main() {
     let mut block_chain = BlockChain::new();
-    block_chain.print_blockchain();
+    // block_chain.print_blockchain();
+
+
+    
+    let block = &block_chain[0];
+    println!("The first block of the chain is: {:?}", block);
 }
+
