@@ -1,6 +1,8 @@
+use hex;
 use sha2::{Digest, Sha256};
+use std::ops::AddAssign;
+use std::time::Instant;
 use std::{iter::chain, time::SystemTime};
-
 
 use crate::transaction::Transaction;
 
@@ -10,6 +12,11 @@ pub trait Serialization<T> {
     fn deserialization(bytes: Vec<u8>) -> T;
 }
 
+impl AddAssign<i32> for Block {
+    fn add_assign(&mut self, rhs: i32) {
+        self.nonce += rhs;
+    }
+}
 
 pub enum BlockSearch {
     SearchByIndex(usize),
@@ -82,6 +89,8 @@ pub struct BlockChain {
 }
 
 impl BlockChain {
+    const DIFFICULTY: usize = 3;
+
     pub fn new() -> Self {
         let mut bc = BlockChain {
             transactions_pool: Vec::<Vec<u8>>::new(),
@@ -94,11 +103,30 @@ impl BlockChain {
 
     pub fn create_block(&mut self, nonce: i32, previous_hash: Vec<u8>) {
         let mut block = Block::new(nonce, previous_hash);
-        for tx in self.transactions_pool.iter(){
+        for tx in self.transactions_pool.iter() {
             block.transactions.push(tx.clone());
         }
         self.transactions_pool.clear();
+        let now = Instant::now();
+        let proof_hash = BlockChain::proof_of_work(&mut block);
+        let elapsed = now.elapsed();
+        println!(
+            "computing time: {:?},proof hash for current block is: {:?}",
+            elapsed, proof_hash
+        );
+
         self.chain.push(block);
+    }
+
+    fn proof_of_work(block: &mut Block) -> String {
+        loop {
+            let hashed_block = block.hash();
+            let hash_str = hex::encode(hashed_block);
+            if hash_str[0..BlockChain::DIFFICULTY] == "0".repeat(BlockChain::DIFFICULTY) {
+                return hash_str;
+            }
+            *block += 1;
+        }
     }
 
     pub fn print_blockchain(&self) {
@@ -182,11 +210,10 @@ impl BlockChain {
         }
     }
 
-
-    pub fn add_transaction(&mut self, tx: &impl Serialization<Transaction> ){
-        for tx_in_pool in self.transactions_pool.iter(){
-            if *tx_in_pool == tx.serialization(){
-                return;;
+    pub fn add_transaction(&mut self, tx: &impl Serialization<Transaction>) {
+        for tx_in_pool in self.transactions_pool.iter() {
+            if *tx_in_pool == tx.serialization() {
+                return;
             }
         }
 
