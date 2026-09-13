@@ -84,10 +84,16 @@ impl Block {
     }
 
     pub fn print_block(&self) {
-        println!("This is previous hash: {:?}", self.previous_hash);
-        println!("This is nonce: {}", self.nonce);
-        println!("This is transactions vector: {:?}", self.transactions);
-        println!("This is time stamp: {:x}", self.time_stamp)
+        println!("timestamp: {:x}", self.time_stamp);
+        //format integer value
+        println!("nonce:      {},", self.nonce);
+        //let compiler decide how to print vector
+        //actually it is called trait, go to it later
+        println!("previous_hash:    {:?}", self.previous_hash);
+        for (idx, tx) in self.transactions.iter().enumerate() {
+            let transaction = Transaction::deserialization(tx.to_vec());
+            println!("the {}'th transaction is: {}", idx, transaction);
+        }
     }
 
     pub fn hash(&self) -> Vec<u8> {
@@ -109,20 +115,29 @@ impl Block {
 pub struct BlockChain {
     transactions_pool: Vec<Vec<u8>>,
     chain: Vec<Block>,
+    blockchain_address: String,
 }
 
 impl BlockChain {
     const DIFFICULTY: usize = 3;
+    const MINING_SENDER: &str= "THE BLOCKCHAIN";
+    const MINING_REWARD: u64= 1;
 
-    pub fn new() -> Self {
+    pub fn new(address: String) -> Self {
         let mut bc = BlockChain {
             transactions_pool: Vec::<Vec<u8>>::new(),
             chain: Vec::<Block>::new(),
+            blockchain_address: address,
         };
 
-        bc.create_block(0, vec![0 as u8; 32]);
+        let first_block = Block::new(0, vec![0 as u8; 32]);
+
+        bc.chain.push(first_block);
+        bc.mining();
         bc
     }
+
+
 
     pub fn create_block(&mut self, nonce: i32, previous_hash: Vec<u8>) {
         let mut block = Block::new(nonce, previous_hash);
@@ -242,4 +257,51 @@ impl BlockChain {
 
         self.transactions_pool.push(tx.serialization());
     }
+
+    pub fn mining(&mut self) -> bool {
+        /*
+        if a block is mined, a transaction will created and the chain will send
+        a coin to the miner
+        */
+        let tx = Transaction::new(
+            BlockChain::MINING_SENDER.clone().into(),
+            self.blockchain_address.clone().into(),
+            BlockChain::MINING_REWARD,
+        );
+        self.add_transaction(&tx);
+
+        self.create_block(0, self.last_block().hash());
+
+        true
+    }
+
+ pub fn calculate_total_amount(&self, address: String) -> i64 {
+        let mut total_amount: i64 = 0;
+        for i in 0..self.chain.len() {
+            //we overload index operator before
+            let block = &self[i];
+            for t in block.transactions.iter() {
+                let tx = Transaction::deserialization(t.clone());
+                let value = tx.value;
+               /*
+                into is a trait used for converting one type into another type, String implement the trait
+                of into with many different type, therefore we need to convert String to the trait with the 
+                right type,here we want string convert itself to Vec<u8>, then we need to convert String
+                to type Into<Vec<u8>>.
+                */
+                if <String as Into<Vec<u8>>>::into(address.clone()) == tx.reciever_address {
+                    total_amount += value as i64;
+                }
+
+                if <String as Into<Vec<u8>>>::into(address.clone()) == tx.sender_address {
+                    total_amount -= value as i64;
+                }
+            }
+        }
+
+        total_amount
+    }
+
+
 }
+

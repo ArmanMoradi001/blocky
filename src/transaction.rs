@@ -4,9 +4,9 @@ use std::fmt::{Display, Formatter};
 
 #[derive(Debug)]
 pub struct Transaction {
-    sender_address: Vec<u8>,
-    reciever_address: Vec<u8>,
-    value: u64,
+    pub sender_address: Vec<u8>,
+    pub reciever_address: Vec<u8>,
+    pub value: u64,
 }
 
 impl Transaction {

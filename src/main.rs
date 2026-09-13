@@ -40,12 +40,30 @@ pub fn get_block_search_result(result: BlockSearchResult) {
     }
 }
 fn main() {
-    let mut block_chain = BlockChain::new();
-    // block_chain.print_blockchain();
+    let my_blockchain_addr = "my blockchain address";
+    let mut block_chain = BlockChain::new(my_blockchain_addr.into());
+    block_chain.print_blockchain();
 
+    block_chain.add_transaction(&Transaction::new("A".into(), "B".into(), 1));
+    block_chain.mining();
+    block_chain.print_blockchain();
 
-    
-    let block = &block_chain[0];
-    println!("The first block of the chain is: {:?}", block);
+    block_chain.add_transaction(&Transaction::new("C".into(), "D".into(), 1));
+    block_chain.add_transaction(&Transaction::new("X".into(), "Y".into(), 1));
+    block_chain.mining();
+    block_chain.print_blockchain();
+
+    println!(
+        "value for miner: {}",
+        block_chain.calculate_total_amount(my_blockchain_addr.to_string())
+    );
+    println!(
+        "value for C: {}",
+        block_chain.calculate_total_amount("C".to_string())
+    );
+    println!(
+        "value for D: {}",
+        block_chain.calculate_total_amount("D".to_string())
+    );
 }
 
