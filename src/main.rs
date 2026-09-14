@@ -1,5 +1,6 @@
 mod blockchain;
 mod transaction;
+mod crypto;
 
 use core::hash;
 use std::result;
@@ -8,6 +9,7 @@ use blockchain::{Block, BlockChain, BlockSearch, BlockSearchResult};
 use transaction::Transaction;
 
 use crate::blockchain::Serialization;
+use crate::crypto::generate_and_sign;
 
 pub fn get_block_search_result(result: BlockSearchResult) {
     match result {
@@ -65,5 +67,8 @@ fn main() {
         "value for D: {}",
         block_chain.calculate_total_amount("D".to_string())
     );
+
+    generate_and_sign(b"This is my message");
+    
 }
 
