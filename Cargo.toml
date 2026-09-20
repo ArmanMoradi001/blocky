@@ -9,3 +9,5 @@ p256 = { version = "0.14.0", features = ["ecdsa", "arithmetic"] }
 rand = "0.10.2"
 rand_core = "0.10.1"
 sha2 = "0.11.0"
+ripemd160="0.9"
+bs58= "0.4"
