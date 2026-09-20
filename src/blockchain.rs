@@ -1,9 +1,9 @@
 use hex;
 use sha2::{Digest, Sha256};
+use std::cmp::PartialEq;
 use std::ops::{AddAssign, Index};
 use std::time::Instant;
 use std::{iter::chain, time::SystemTime};
-use std::cmp::PartialEq;
 
 use crate::transaction::Transaction;
 
@@ -18,13 +18,11 @@ impl AddAssign<i32> for Block {
         self.nonce += rhs;
     }
 }
-impl PartialEq for Block{
+impl PartialEq for Block {
     fn eq(&self, other: &Block) -> bool {
-        
         self.hash() == other.hash()
     }
 }
-
 
 impl Index<usize> for BlockChain {
     type Output = Block;
@@ -120,8 +118,8 @@ pub struct BlockChain {
 
 impl BlockChain {
     const DIFFICULTY: usize = 3;
-    const MINING_SENDER: &str= "THE BLOCKCHAIN";
-    const MINING_REWARD: u64= 1;
+    const MINING_SENDER: &str = "THE BLOCKCHAIN";
+    const MINING_REWARD: u64 = 1;
 
     pub fn new(address: String) -> Self {
         let mut bc = BlockChain {
@@ -136,8 +134,6 @@ impl BlockChain {
         bc.mining();
         bc
     }
-
-
 
     pub fn create_block(&mut self, nonce: i32, previous_hash: Vec<u8>) {
         let mut block = Block::new(nonce, previous_hash);
@@ -275,7 +271,7 @@ impl BlockChain {
         true
     }
 
- pub fn calculate_total_amount(&self, address: String) -> i64 {
+    pub fn calculate_total_amount(&self, address: String) -> i64 {
         let mut total_amount: i64 = 0;
         for i in 0..self.chain.len() {
             //we overload index operator before
@@ -283,9 +279,9 @@ impl BlockChain {
             for t in block.transactions.iter() {
                 let tx = Transaction::deserialization(t.clone());
                 let value = tx.value;
-               /*
+                /*
                 into is a trait used for converting one type into another type, String implement the trait
-                of into with many different type, therefore we need to convert String to the trait with the 
+                of into with many different type, therefore we need to convert String to the trait with the
                 right type,here we want string convert itself to Vec<u8>, then we need to convert String
                 to type Into<Vec<u8>>.
                 */
@@ -301,7 +297,4 @@ impl BlockChain {
 
         total_amount
     }
-
-
 }
-
