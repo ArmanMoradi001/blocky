@@ -1,4 +1,4 @@
-use crate::blockchain::Serialization;
+use super::blockchain::Serialization;
 use core::fmt;
 use std::fmt::{Display, Formatter};
 

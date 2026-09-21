@@ -1,16 +1,15 @@
 mod blockchain;
 mod crypto;
-mod transaction;
 mod wallet;
 use core::hash;
 use std::result;
 
-use blockchain::{Block, BlockChain, BlockSearch, BlockSearchResult};
-use transaction::Transaction;
+use blockchain::blockchain::{Block, BlockChain, BlockSearch, BlockSearchResult};
+use blockchain::transaction::Transaction;
 
-use crate::blockchain::Serialization;
-use crate::crypto::generate_and_sign;
-use crate::wallet::Wallet;
+use blockchain::blockchain::Serialization;
+// use crypto::generate_and_sign;
+use wallet::wallet::Wallet;
 
 pub fn get_block_search_result(result: BlockSearchResult) {
     match result {

@@ -5,7 +5,7 @@ use std::ops::{AddAssign, Index};
 use std::time::Instant;
 use std::{iter::chain, time::SystemTime};
 
-use crate::transaction::Transaction;
+use super::transaction::Transaction;
 
 pub trait Serialization<T> {
     fn serialization(&self) -> Vec<u8>;
