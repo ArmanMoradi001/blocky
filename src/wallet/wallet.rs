@@ -2,6 +2,7 @@ use rand::rngs::SysRng;
 use rand_core::UnwrapErr;
 use ripemd160::{Digest as ripDigest, Ripemd160};
 use sha2::{Digest, Sha256};
+use serde::Serialize;
 
 use p256::ecdsa::{
     Signature, SigningKey, VerifyingKey,
@@ -14,6 +15,16 @@ pub struct Wallet {
     signing_key: SigningKey,
     verifying_key: VerifyingKey,
     address: String,
+}
+
+
+#[derive(Serialize, Clone, Debug)]
+pub  struct Transaction{
+    pub sender: String,
+    pub recipeint: String,
+    pub amount: u64,
+    pub public_key: String,
+    pub signature: String,
 }
 
 impl Wallet {
@@ -84,5 +95,27 @@ impl Wallet {
         8. encode the result of step 7 by base58
          */
         self.address.clone()
+    }
+
+
+    pub fn sign_transaction(&self, reciever: &String, amount: u64)-> Transaction{
+
+        let mut transaction = Transaction{
+            sender: self.address.clone(),
+            recipeint: reciever.clone(),
+            amount: amount,
+            public_key: self.public_key_str(),
+            signature: String::new()
+
+        };
+
+        let serialized_str = serde_json::to_string(&transaction).unwrap();
+        let serialized= serialized_str.as_bytes();
+        let sign: Signature = self.signing_key.sign(serialized);
+
+        transaction.signature = hex::encode(sign.to_bytes());
+        transaction
+
+
     }
 }
