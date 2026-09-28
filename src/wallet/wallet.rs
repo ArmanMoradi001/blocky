@@ -118,4 +118,51 @@ impl Wallet {
 
 
     }
+
+
+    pub fn verify_transaction(transaction: &Transaction)-> bool{
+        // 1. Decode the hex signature; any malformed input fails verification.
+        let sig_bytes = match hex::decode(&transaction.signature) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        let signature = match Signature::from_slice(&sig_bytes) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+
+        // 2. Rebuild the verifying key.
+        // `public_key_str()` encodes raw x || y as hex (32 + 32 bytes).
+        let pubkey_bytes = match hex::decode(&transaction.public_key) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        if pubkey_bytes.len() != 64 {
+            return false;
+        }
+        let mut sec1_bytes = Vec::with_capacity(65);
+        sec1_bytes.push(0x04); // uncompressed point prefix
+        sec1_bytes.extend_from_slice(&pubkey_bytes);
+        let verifying_key = match VerifyingKey::from_sec1_bytes(&sec1_bytes) {
+            Ok(k) => k,
+            Err(_) => return false,
+        };
+
+        // 3. Bind the key to the claimed sender address so an attacker can't
+        // swap in their own public key for someone else's address.
+        if Self::generate_address(&verifying_key) != transaction.sender {
+            return false;
+        }
+
+        // 4. Reconstruct the exact payload that was signed: the transaction
+        // serialized with an empty signature (see `sign_transaction`).
+        let mut unsigned = transaction.clone();
+        unsigned.signature = String::new();
+        let message = match serde_json::to_string(&unsigned) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+
+        verifying_key.verify(message.as_bytes(), &signature).is_ok()
+    }
 }
