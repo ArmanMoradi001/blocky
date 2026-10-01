@@ -42,34 +42,17 @@ pub fn get_block_search_result(result: BlockSearchResult) {
     }
 }
 fn main() {
-    // let my_blockchain_addr = "my blockchain address";
-    // let mut block_chain = BlockChain::new(my_blockchain_addr.into());
-    // block_chain.print_blockchain();
+    let miner = Wallet::new();
 
-    // block_chain.add_transaction(&Transaction::new("A".into(), "B".into(), 1));
-    // block_chain.mining();
-    // block_chain.print_blockchain();
+    let mut blockchain = BlockChain::new(miner.address_str());
 
-    // block_chain.add_transaction(&Transaction::new("C".into(), "D".into(), 1));
-    // block_chain.add_transaction(&Transaction::new("X".into(), "Y".into(), 1));
-    // block_chain.mining();
-    // block_chain.print_blockchain();
+    let wallet_a = Wallet::new();
+    let wallet_b = Wallet::new();
 
-    // println!(
-    //     "value for miner: {}",
-    //     block_chain.calculate_total_amount(my_blockchain_addr.to_string())
-    // );
-    // println!(
-    //     "value for C: {}",
-    //     block_chain.calculate_total_amount("C".to_string())
-    // );
-    // println!(
-    //     "value for D: {}",
-    //     block_chain.calculate_total_amount("D".to_string())
-    // );
+    let tx_a_b = wallet_a.sign_transaction(&wallet_b.address_str(), 100);
 
-    let wallet = Wallet::new();
-    println!("Wallet private key is: {}", wallet.private_key_str());
-    println!("Wallet public key is: {}", wallet.public_key_str());
-    println!("Wallet address is: {}", wallet.address_str());
+    println!(
+        "the transactio state is: {}",
+        blockchain.add_transaction(&tx_a_b)
+    );
 }
