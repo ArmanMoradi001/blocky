@@ -1,4 +1,6 @@
 use hex;
+use p256::PublicKey;
+use p256::ecdsa::signature;
 use sha2::{Digest, Sha256};
 use std::cmp::PartialEq;
 use std::ops::{AddAssign, Index};
@@ -6,6 +8,7 @@ use std::time::Instant;
 use std::{iter::chain, time::SystemTime};
 
 use super::transaction::Transaction;
+use crate::wallet::wallet::{Transaction as WalletTransaction, Wallet};
 
 pub trait Serialization<T> {
     fn serialization(&self) -> Vec<u8>;
@@ -244,14 +247,36 @@ impl BlockChain {
         }
     }
 
-    pub fn add_transaction(&mut self, tx: &impl Serialization<Transaction>) {
+    pub fn add_transaction(&mut self, tx: &WalletTransaction) -> bool {
+        if tx.sender == self.blockchain_address {
+            print!("Miner can not send transaction to it self");
+            return false;
+        }
+
+        if tx.sender != BlockChain::MINING_SENDER && !Wallet::verify_transaction(tx) {
+            println!("Transaction is not valid!");
+            return false;
+        }
+
+        // if self.calculate_total_amount(tx.sender.clone()) < tx.amount as i64 {
+        //     print!("Invalid balance");
+        //     return false;
+        // }
+
+        let btx = Transaction {
+            sender_address: tx.sender.as_bytes().to_vec(),
+            reciever_address: tx.recipeint.clone().into_bytes(),
+            value: tx.amount,
+        };
+
         for tx_in_pool in self.transactions_pool.iter() {
-            if *tx_in_pool == tx.serialization() {
-                return;
+            if *tx_in_pool == btx.serialization() {
+                return false;
             }
         }
 
-        self.transactions_pool.push(tx.serialization());
+        self.transactions_pool.push(btx.serialization());
+        true
     }
 
     pub fn mining(&mut self) -> bool {
@@ -259,11 +284,14 @@ impl BlockChain {
         if a block is mined, a transaction will created and the chain will send
         a coin to the miner
         */
-        let tx = Transaction::new(
-            BlockChain::MINING_SENDER.clone().into(),
-            self.blockchain_address.clone().into(),
-            BlockChain::MINING_REWARD,
-        );
+        let tx = WalletTransaction {
+            sender: BlockChain::MINING_SENDER.clone().into(),
+            recipeint: self.blockchain_address.clone().into(),
+            amount: BlockChain::MINING_REWARD,
+            public_key: "".to_string(),
+            signature: "".to_string(),
+        };
+
         self.add_transaction(&tx);
 
         self.create_block(0, self.last_block().hash());
