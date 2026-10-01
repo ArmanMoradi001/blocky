@@ -1,8 +1,8 @@
 use rand::rngs::SysRng;
 use rand_core::UnwrapErr;
 use ripemd160::{Digest as ripDigest, Ripemd160};
-use sha2::{Digest, Sha256};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use p256::ecdsa::{
     Signature, SigningKey, VerifyingKey,
@@ -17,9 +17,8 @@ pub struct Wallet {
     address: String,
 }
 
-
 #[derive(Serialize, Clone, Debug)]
-pub  struct Transaction{
+pub struct Transaction {
     pub sender: String,
     pub recipeint: String,
     pub amount: u64,
@@ -97,30 +96,24 @@ impl Wallet {
         self.address.clone()
     }
 
-
-    pub fn sign_transaction(&self, reciever: &String, amount: u64)-> Transaction{
-
-        let mut transaction = Transaction{
+    pub fn sign_transaction(&self, reciever: &String, amount: u64) -> Transaction {
+        let mut transaction = Transaction {
             sender: self.address.clone(),
             recipeint: reciever.clone(),
             amount: amount,
             public_key: self.public_key_str(),
-            signature: String::new()
-
+            signature: String::new(),
         };
 
         let serialized_str = serde_json::to_string(&transaction).unwrap();
-        let serialized= serialized_str.as_bytes();
+        let serialized = serialized_str.as_bytes();
         let sign: Signature = self.signing_key.sign(serialized);
 
         transaction.signature = hex::encode(sign.to_bytes());
         transaction
-
-
     }
 
-
-    pub fn verify_transaction(transaction: &Transaction)-> bool{
+    pub fn verify_transaction(transaction: &Transaction) -> bool {
         // 1. Decode the hex signature; any malformed input fails verification.
         let sig_bytes = match hex::decode(&transaction.signature) {
             Ok(b) => b,
