@@ -12,6 +12,16 @@ pub struct ApiServer {
     pub cache: HashMap<String, BlockChain>,
 }
 
+#[derive(Deserialize, Debug)]
+pub struct Transaction {
+    pub private_key: String,
+    pub blockchain_address: String,
+    pub public_key: String,
+    pub recipient_address: String,
+    pub amount: String,
+}
+
+
 impl ApiServer {
     pub fn new(port: u16) -> Self {
         let mut apiserver = ApiServer {
@@ -43,6 +53,13 @@ impl ApiServer {
         data.get_ref().get_index().await
     }
 
+
+       pub async fn get_wallet_handler() -> HttpResponse {
+        let wallet_user = wallet::Wallet::new();
+        let wallet_data = wallet_user.get_wallet_data();
+        HttpResponse::Ok().json(wallet_data)
+    }
+
     pub async fn run_server(&self) {
         let api = Arc::new(self.clone());
         let server = HttpServer::new(move || {
@@ -51,6 +68,7 @@ impl ApiServer {
                 .wrap(actix_web::middleware::Logger::default())
                 .route("/", web::get().to(Self::get_index_handler))
                 .route("/wallet", web::get().to(Self::get_wallet))
+                .route("/get_wallet", web::get().to(Self::get_wallet_handler))
         });
 
         println!("Server running on port: {}", self.port);
@@ -72,6 +90,55 @@ impl ApiServer {
                 <title>Wallet</title>
                 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js">
                 </script> 
+
+                <script> 
+                $(function() {
+                    $.ajax({
+                        url: "/get_wallet",
+                        method: "GET",
+                        success: function(response) {
+                            console.log(response);
+                            $("\#public_key").val(response['public_key']);
+                            $("\#private_key").val(response['private_key']);
+                            $("\#blockchain_address").val(response['blockchain_address']);
+                        },
+                        error: function(error) {
+                            console.info(error);
+                        }
+                    })
+
+                    $("\#send_money").click(function() {
+                        let confirm_text = 'Are you ready to send the given amount?'
+                        let confirm_result = confirm(confirm_text);
+                        if (!confirm_result) {
+                            alert('Transaction cancelled');
+                            return;
+                        }
+                        let transaction = {
+                            'private_key': $("\#private_key").val(),
+                            'blockchain_address': $("\#blockchain_address").val(),
+                            'public_key': $("\#public_key").val(),
+                            'recipient_address': $("\#recipient_address").val(),
+                            'amount': $("\#send_amount").val(),
+                        }
+                        
+                        $.ajax({
+                            url: "/transaction",
+                            method: "POST",
+                            contentType: "application/json",
+                            data: JSON.stringify(transaction),
+                            success: function(response) {
+                                console.log(response);
+                                alert('success');
+                            },
+                            error: function(error) {
+                                console.error(error);
+                                alert('error');
+                            }
+                        })
+                    })
+                })
+                </script>
             </head>
             <body>
                 <div>
@@ -106,4 +173,12 @@ impl ApiServer {
             "#,
         )
     }
+    pub async fn get_transaction_handler(transaction: web::Json<Transaction>) -> HttpResponse {
+        // let blockchain = self.cache.get("blockchain").unwrap();
+        // let transaction = blockchain.create_transaction(transaction.private_key, transaction.blockchain_address, transaction.recipient_address, transaction.amount);
+        // HttpResponse::Ok().json(transaction)
+        debug!("receive json info: {:?}", transaction.into_inner());
+        HttpResponse::Ok().json("transaction")
+    }
+
 }
