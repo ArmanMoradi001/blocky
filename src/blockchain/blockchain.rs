@@ -168,7 +168,7 @@ impl BlockChain {
 
     pub fn print_blockchain(&self) {
         for (idx, block) in self.chain.iter().enumerate() {
-            println!("{} The chain {} {}", "=".repeat(25), idx, "=".repeat(25));
+            println!("{} The Block {} {}", "=".repeat(25), idx, "=".repeat(25));
             block.print_block();
         }
         println!("{}", "*".repeat(25));
@@ -258,10 +258,10 @@ impl BlockChain {
             return false;
         }
 
-        // if self.calculate_total_amount(tx.sender.clone()) < tx.amount as i64 {
-        //     print!("Invalid balance");
-        //     return false;
-        // }
+        if self.calculate_total_amount(tx.sender.clone()) < tx.amount as i64 {
+            print!("Invalid balance");
+            return false;
+        }
 
         let btx = Transaction {
             sender_address: tx.sender.as_bytes().to_vec(),
