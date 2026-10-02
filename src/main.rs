@@ -11,8 +11,8 @@ use blockchain::blockchain::Serialization;
 use blockchain::blockchain::{Block, BlockChain, BlockSearch, BlockSearchResult};
 use blockchain::transaction::Transaction;
 // use crypto::generate_and_sign;
-use wallet::wallet::Wallet;
 use actix_web::middleware::Logger;
+use wallet::wallet::Wallet;
 
 pub fn get_block_search_result(result: BlockSearchResult) {
     match result {
@@ -47,7 +47,7 @@ pub fn get_block_search_result(result: BlockSearchResult) {
 
 #[actix_web::main]
 async fn main() {
-        env_logger::init();
+    env_logger::init();
 
     let server = ApiServer::new(5000);
     server.run_server().await;
