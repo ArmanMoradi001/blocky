@@ -18,6 +18,14 @@ pub struct Wallet {
 }
 
 #[derive(Serialize, Clone, Debug)]
+
+pub struct WalletData {
+    pub public_key: String,
+    pub private_key: String,
+    pub blockchain_address: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
 pub struct Transaction {
     pub sender: String,
     pub recipeint: String,
@@ -157,5 +165,13 @@ impl Wallet {
         };
 
         verifying_key.verify(message.as_bytes(), &signature).is_ok()
+    }
+
+    pub fn get_wallet_data(&self) -> WalletData {
+        WalletData {
+            public_key: self.public_key_str(),
+            private_key: self.private_key_str(),
+            blockchain_address: self.address_str(),
+        }
     }
 }
