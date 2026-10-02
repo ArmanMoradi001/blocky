@@ -5,13 +5,14 @@ mod wallet;
 use core::hash;
 use std::result;
 
-use blockchain::blockchain::{Block, BlockChain, BlockSearch, BlockSearchResult};
-use blockchain::transaction::Transaction;
-use actix_web::{get, App, HttpServer, Responder};
+use actix_web::{App, HttpServer, Responder, get};
 use api_server::api::ApiServer;
 use blockchain::blockchain::Serialization;
+use blockchain::blockchain::{Block, BlockChain, BlockSearch, BlockSearchResult};
+use blockchain::transaction::Transaction;
 // use crypto::generate_and_sign;
 use wallet::wallet::Wallet;
+use actix_web::middleware::Logger;
 
 pub fn get_block_search_result(result: BlockSearchResult) {
     match result {
@@ -46,9 +47,10 @@ pub fn get_block_search_result(result: BlockSearchResult) {
 
 #[actix_web::main]
 async fn main() {
+        env_logger::init();
+
     let server = ApiServer::new(5000);
     server.run_server().await;
-
 
     // let miner = Wallet::new();
 
@@ -71,13 +73,11 @@ async fn main() {
     // println!("The blcance for miner is: {}", blockchain.calculate_total_amount(miner.address_str()));
 }
 
-
- 
 // #[get("/")]
 // async fn hello() -> impl Responder {
 //     "Hello, world!"
 // }
- 
+
 // #[actix_web::main]
 // async fn main() -> std::io::Result<()> {
 //     HttpServer::new(|| App::new().service(hello))
