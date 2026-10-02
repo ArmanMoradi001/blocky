@@ -1,6 +1,7 @@
 use hex;
 use p256::PublicKey;
 use p256::ecdsa::signature;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::cmp::PartialEq;
 use std::ops::{AddAssign, Index};
@@ -62,7 +63,7 @@ pub enum BlockSearchResult<'a> {
     FailOfHash(Vec<u8>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Block {
     nonce: i32,
     previous_hash: Vec<u8>,
@@ -111,7 +112,7 @@ impl Block {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 
 pub struct BlockChain {
     transactions_pool: Vec<Vec<u8>>,
