@@ -253,7 +253,7 @@ impl ApiServer {
     async fn get_index(&self) -> HttpResponse {
         let unlock_cache = self.cache.lock().unwrap();
         let blockchain = unlock_cache.get("blockchain").unwrap();
-        let blocks = &blockchain.chain;
+        let blocks = blockchain.get_chain();
         HttpResponse::Ok().json(blocks)
     }
 
