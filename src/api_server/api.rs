@@ -80,7 +80,7 @@ impl ApiServer {
             .expect("Error running the server");
     }
 
-    pub async fn get_wallet() -> HttpResponse {
+   pub async fn get_wallet() -> HttpResponse {
         HttpResponse::Ok().content_type("text/html").body(
             r#"
             <!DOCTYPE html>
@@ -173,6 +173,9 @@ impl ApiServer {
             "#,
         )
     }
+    
+
+    }
     pub async fn get_transaction_handler(transaction: web::Json<Transaction>) -> HttpResponse {
         // let blockchain = self.cache.get("blockchain").unwrap();
         // let transaction = blockchain.create_transaction(transaction.private_key, transaction.blockchain_address, transaction.recipient_address, transaction.amount);
@@ -181,4 +184,4 @@ impl ApiServer {
         HttpResponse::Ok().json("transaction")
     }
 
-}
+
