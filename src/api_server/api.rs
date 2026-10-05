@@ -55,7 +55,7 @@ impl ApiServer {
             let mut unlock_cache = api_server.cache.lock().unwrap();
             unlock_cache.insert(
                 "blockchain".to_string(),
-                BlockChain::new(wallet_miner.get_address()),
+                BlockChain::new(wallet_miner.address_str()),
             );
         }
 
