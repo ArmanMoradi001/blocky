@@ -50,7 +50,7 @@ async fn main() {
     env_logger::init();
 
     let server = ApiServer::new(5000);
-    server.run_server().await;
+    server.run().await;
 
     // let miner = Wallet::new();
 
