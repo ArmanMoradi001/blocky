@@ -326,4 +326,18 @@ impl BlockChain {
 
         total_amount
     }
+
+    pub fn get_chain(&self) -> &Vec<Block> {
+        &self.chain
+    }
+
+    pub fn get_transactions(&self) -> Vec<Transaction> {
+        let mut transactions = Vec::new();
+        for block in self.chain.iter() {
+            for t in block.transactions.iter() {
+                transactions.push(Transaction::deserialization(t.clone()));
+            }
+        }
+        transactions
+    }
 }
