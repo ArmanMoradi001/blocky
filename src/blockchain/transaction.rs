@@ -1,8 +1,9 @@
 use super::blockchain::Serialization;
 use core::fmt;
 use std::fmt::{Display, Formatter};
+use serde::Serialize;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Transaction {
     pub sender_address: Vec<u8>,
     pub reciever_address: Vec<u8>,
