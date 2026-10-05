@@ -167,6 +167,31 @@ impl Wallet {
         verifying_key.verify(message.as_bytes(), &signature).is_ok()
     }
 
+    pub fn new_from(public_key_hex: &str, private_key_hex: &str, address: &str) -> Self {
+        let sk_bytes = hex::decode(private_key_hex).expect("invalid private key hex");
+        let signing_key =
+            SigningKey::from_slice(&sk_bytes).expect("invalid private key bytes");
+        let verifying_key = signing_key.verifying_key().clone();
+
+        // Optional consistency check: derived public key should match the supplied one.
+        let derived_pub = {
+            let key_point = verifying_key.to_sec1_point(false);
+            let point_x = key_point.x().unwrap();
+            let point_y = key_point.y().unwrap();
+            hex::encode(point_x) + hex::encode(point_y).as_str()
+        };
+        debug_assert!(
+            derived_pub == public_key_hex,
+            "supplied public key does not match private key"
+        );
+
+        Wallet {
+            signing_key,
+            verifying_key,
+            address: address.to_string(),
+        }
+    }
+
     pub fn get_wallet_data(&self) -> WalletData {
         WalletData {
             public_key: self.public_key_str(),
