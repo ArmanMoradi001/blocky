@@ -18,7 +18,7 @@ pub struct TransactionsInBlockChain {
 //http:://localhost:5000/amount/0x12345
 #[derive(Serialize)]
 struct QueryAmount {
-    amount: f64,
+    amount: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -214,7 +214,7 @@ impl ApiServer {
         let tx = transaction.into_inner();
         debug!("receive json info: {:?}", tx);
         //parse return Result
-        let amount = tx.amount.parse::<f64>().unwrap();
+        let amount = tx.amount.parse::<u64>().unwrap();
         //need to create wallet instance from the transaction
         let wallet = Wallet::new_from(&tx.public_key, &tx.private_key, &tx.blockchain_address);
         let wallet_tx = wallet.sign_transaction(&tx.recipient_address, amount);
