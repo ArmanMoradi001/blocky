@@ -1,12 +1,11 @@
 use crate::blockchain::blockchain::BlockChain;
 use crate::blockchain::transaction::Transaction as BlockchainTransaction;
-use crate::wallet::wallet::{Wallet, Transaction as WalletTransaction};
+use crate::wallet::wallet::Wallet;
 use actix_web::{App, HttpResponse, HttpServer, web};
-use log::{debug, error, info, trace, warn};
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{fmt::Debug, sync::{Arc, Mutex}};
-use rand_core::block;
 
 
 #[derive(Serialize, Debug)]
@@ -29,12 +28,31 @@ pub struct ApiServer {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Transaction {
+pub struct TransactionRequest {
     pub private_key: String,
     pub public_key: String,
     pub blockchain_address: String,
     pub recipient_address: String,
     pub amount: String,
+}
+
+// Keep old name as alias so existing clients keep working.
+pub type Transaction = TransactionRequest;
+
+#[derive(Deserialize, Debug)]
+pub struct FaucetRequest {
+    pub recipient_address: String,
+    pub amount: String,
+}
+
+#[derive(Serialize, Debug)]
+pub struct TransferResponse {
+    pub status: String,
+    pub sender: String,
+    pub recipient: String,
+    pub amount: u64,
+    pub pending_in_pool: usize,
+    pub note: String,
 }
 
 impl ApiServer {
@@ -80,12 +98,45 @@ impl ApiServer {
         let api_server = data.get_ref();
         let mut unlock_cache = api_server.cache.lock().unwrap();
         let block_chain = unlock_cache.get_mut("blockchain").unwrap();
-        let is_mined = block_chain.mining();
-        if (!is_mined) {
+        if !block_chain.mining() {
             return HttpResponse::InternalServerError().json("mining fail");
         }
 
         HttpResponse::Ok().json("mining ok")
+    }
+
+    pub async fn faucet(
+        data: web::Data<Arc<ApiServer>>,
+        req: web::Json<FaucetRequest>,
+    ) -> HttpResponse {
+        let recipient = req.recipient_address.trim().to_string();
+        if recipient.is_empty() {
+            return HttpResponse::BadRequest().json("recipient_address must not be empty");
+        }
+        let amount: u64 = match req.amount.trim().parse() {
+            Ok(v) => v,
+            Err(_) => return HttpResponse::BadRequest().json("amount must be a positive integer"),
+        };
+        if amount == 0 {
+            return HttpResponse::BadRequest().json("amount must be greater than 0");
+        }
+
+        let api_server = data.get_ref();
+        let mut unlock_cache = api_server.cache.lock().unwrap();
+        let block_chain = unlock_cache.get_mut("blockchain").unwrap();
+        match block_chain.faucet(recipient.clone(), amount) {
+            Ok(()) => {
+                info!("faucet: minted {amount} to {recipient}");
+                HttpResponse::Ok().json(serde_json::json!({
+                    "status": "ok",
+                    "recipient": recipient,
+                    "amount": amount,
+                    "pending_in_pool": block_chain.pending_count(),
+                    "note": "mine to confirm",
+                }))
+            }
+            Err(e) => HttpResponse::BadRequest().json(e),
+        }
     }
 
     async fn get_wallet() -> HttpResponse {
@@ -209,25 +260,60 @@ impl ApiServer {
 
     pub async fn get_transaction_handler(
         data: web::Data<Arc<ApiServer>>,
-        transaction: web::Json<Transaction>,
+        transaction: web::Json<TransactionRequest>,
     ) -> HttpResponse {
         let tx = transaction.into_inner();
         debug!("receive json info: {:?}", tx);
-        //parse return Result
-        let amount = tx.amount.parse::<u64>().unwrap();
-        //need to create wallet instance from the transaction
-        let wallet = Wallet::new_from(&tx.public_key, &tx.private_key, &tx.blockchain_address);
-        let wallet_tx = wallet.sign_transaction(&tx.recipient_address, amount);
+
+        let sender = tx.blockchain_address.trim().to_string();
+        let recipient = tx.recipient_address.trim().to_string();
+        if sender.is_empty() || recipient.is_empty() {
+            return HttpResponse::BadRequest().json("sender and recipient must not be empty");
+        }
+        if sender == recipient {
+            return HttpResponse::BadRequest().json("sender and recipient must differ");
+        }
+        let amount: u64 = match tx.amount.trim().parse() {
+            Ok(v) => v,
+            Err(_) => return HttpResponse::BadRequest().json("amount must be a positive integer"),
+        };
+        if amount == 0 {
+            return HttpResponse::BadRequest().json("amount must be greater than 0");
+        }
+
+        // Rebuild the sender wallet from the supplied keys. Never panics:
+        // mismatched/corrupt keys become a 400.
+        let wallet = match Wallet::try_new_from(
+            tx.public_key.trim(),
+            tx.private_key.trim(),
+            &sender,
+        ) {
+            Ok(w) => w,
+            Err(e) => return HttpResponse::BadRequest().json(e),
+        };
+        let wallet_tx = wallet.sign_transaction(&recipient, amount);
+
         let api_server = data.get_ref();
         let mut unlock_cache = api_server.cache.lock().unwrap();
         let block_chain = unlock_cache.get_mut("blockchain").unwrap();
-        let add_result = block_chain.add_transaction(&wallet_tx);
-        if !add_result {
-            info!("add transaction to blockchain fail");
-            return HttpResponse::InternalServerError().json("add transaction to blockchain fail");
+        match block_chain.add_transaction(&wallet_tx) {
+            Ok(()) => {
+                info!("queued transaction {sender} -> {recipient} : {amount}");
+                HttpResponse::Created().json(TransferResponse {
+                    status: "pending".to_string(),
+                    sender,
+                    recipient,
+                    amount,
+                    pending_in_pool: block_chain.pending_count(),
+                    note: "call GET /mining to confirm, then check /amount/{address}".to_string(),
+                })
+            }
+            Err(e) if e.contains("insufficient") => {
+                HttpResponse::UnprocessableEntity().json(e)
+            }
+            Err(e) if e.contains("duplicate") => HttpResponse::Conflict().json(e),
+            Err(e) => HttpResponse::BadRequest().json(e),
         }
-        info!("add transaction to blockchain ok");
-        return HttpResponse::Ok().json("add transaction to blockchain ok");
     }
 
     pub async fn show_transaction(data: web::Data<Arc<ApiServer>>) -> HttpResponse {
@@ -241,7 +327,11 @@ impl ApiServer {
         get_transactions.transactions = block_chain.get_transactions();
         get_transactions.transaction_count = get_transactions.transactions.len();
         debug!("show transactions in chain:{:?}", get_transactions);
-        HttpResponse::Ok().json(get_transactions)
+        HttpResponse::Ok().json(serde_json::json!({
+            "transaction_count": get_transactions.transaction_count,
+            "transactions": get_transactions.transactions,
+            "pending_in_pool": block_chain.pending_count(),
+        }))
     }
 
     async fn get_wallet_handler() -> HttpResponse {
@@ -283,6 +373,7 @@ impl ApiServer {
                     "/transaction",
                     web::post().to(Self::get_transaction_handler),
                 )
+                .route("/faucet", web::post().to(Self::faucet))
                 .route("/show_transactions", web::get().to(Self::show_transaction))
                 .route("/mining", web::get().to(Self::mining))
                 .route("/amount/{address}", web::get().to(Self::get_amount))

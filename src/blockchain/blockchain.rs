@@ -248,20 +248,31 @@ impl BlockChain {
         }
     }
 
-    pub fn add_transaction(&mut self, tx: &WalletTransaction) -> bool {
-        if tx.sender == self.blockchain_address {
-            print!("Miner can not send transaction to it self");
-            return false;
+    pub fn add_transaction(&mut self, tx: &WalletTransaction) -> Result<(), String> {
+        if tx.amount == 0 {
+            return Err("amount must be greater than 0".to_string());
         }
 
-        if tx.sender != BlockChain::MINING_SENDER && !Wallet::verify_transaction(tx) {
+        if tx.sender == tx.recipeint {
+            return Err("sender and recipient must differ".to_string());
+        }
+
+        let is_reward = tx.sender == BlockChain::MINING_SENDER;
+        if !is_reward && !Wallet::verify_transaction(tx) {
             println!("Transaction is not valid!");
-            return false;
+            return Err("transaction signature verification failed".to_string());
         }
 
-        if self.calculate_total_amount(tx.sender.clone()) < tx.amount as i64 {
-            print!("Invalid balance");
-            return false;
+        // Minting transactions create funds out of thin air, so they are
+        // exempt from the balance check. Everyone else must afford it from
+        // confirmed (mined) balance.
+        if !is_reward && self.calculate_total_amount(tx.sender.clone()) < tx.amount as i64 {
+            println!(
+                "Invalid balance: {} has {}",
+                tx.sender,
+                self.calculate_total_amount(tx.sender.clone())
+            );
+            return Err("insufficient confirmed balance (mine pending transactions first)".to_string());
         }
 
         let btx = Transaction {
@@ -272,12 +283,39 @@ impl BlockChain {
 
         for tx_in_pool in self.transactions_pool.iter() {
             if *tx_in_pool == btx.serialization() {
-                return false;
+                return Err("duplicate transaction already in pool".to_string());
             }
         }
 
         self.transactions_pool.push(btx.serialization());
-        true
+        Ok(())
+    }
+
+    /// Mint `amount` new coins to `recipient` (test faucet). Uses the
+    /// MINING_SENDER identity so it bypasses signature/balance checks.
+    pub fn faucet(&mut self, recipient: String, amount: u64) -> Result<(), String> {
+        if recipient.is_empty() {
+            return Err("recipient address must not be empty".to_string());
+        }
+        if amount == 0 {
+            return Err("amount must be greater than 0".to_string());
+        }
+        let tx = WalletTransaction {
+            sender: BlockChain::MINING_SENDER.to_string(),
+            recipeint: recipient,
+            amount,
+            public_key: String::new(),
+            signature: String::new(),
+        };
+        self.add_transaction(&tx)
+    }
+
+    pub fn miner_address(&self) -> String {
+        self.blockchain_address.clone()
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.transactions_pool.len()
     }
 
     pub fn mining(&mut self) -> bool {
@@ -286,14 +324,16 @@ impl BlockChain {
         a coin to the miner
         */
         let tx = WalletTransaction {
-            sender: BlockChain::MINING_SENDER.clone().into(),
-            recipeint: self.blockchain_address.clone().into(),
+            sender: BlockChain::MINING_SENDER.to_string(),
+            recipeint: self.blockchain_address.clone(),
             amount: BlockChain::MINING_REWARD,
-            public_key: "".to_string(),
-            signature: "".to_string(),
+            public_key: String::new(),
+            signature: String::new(),
         };
 
-        self.add_transaction(&tx);
+        if let Err(e) = self.add_transaction(&tx) {
+            println!("mining reward failed: {e}");
+        }
 
         self.create_block(0, self.last_block().hash());
 

@@ -167,29 +167,43 @@ impl Wallet {
         verifying_key.verify(message.as_bytes(), &signature).is_ok()
     }
 
-    pub fn new_from(public_key_hex: &str, private_key_hex: &str, address: &str) -> Self {
-        let sk_bytes = hex::decode(private_key_hex).expect("invalid private key hex");
-        let signing_key =
-            SigningKey::from_slice(&sk_bytes).expect("invalid private key bytes");
+    pub fn try_new_from(
+        public_key_hex: &str,
+        private_key_hex: &str,
+        address: &str,
+    ) -> Result<Self, String> {
+        let sk_bytes =
+            hex::decode(private_key_hex).map_err(|_| "invalid private_key hex".to_string())?;
+        let signing_key = SigningKey::from_slice(&sk_bytes)
+            .map_err(|_| "invalid private_key (not a valid secp256r1 scalar)".to_string())?;
         let verifying_key = signing_key.verifying_key().clone();
 
-        // Optional consistency check: derived public key should match the supplied one.
+        // Consistency check: derived public key must match the supplied one.
         let derived_pub = {
             let key_point = verifying_key.to_sec1_point(false);
-            let point_x = key_point.x().unwrap();
-            let point_y = key_point.y().unwrap();
+            let (Some(point_x), Some(point_y)) = (key_point.x(), key_point.y()) else {
+                return Err("failed to derive public key".to_string());
+            };
             hex::encode(point_x) + hex::encode(point_y).as_str()
         };
-        debug_assert!(
-            derived_pub == public_key_hex,
-            "supplied public key does not match private key"
-        );
+        if derived_pub != public_key_hex {
+            return Err("public_key does not match private_key".to_string());
+        }
+        let derived_addr = Self::generate_address(&verifying_key);
+        if derived_addr != address {
+            return Err("blockchain_address does not match keys".to_string());
+        }
 
-        Wallet {
+        Ok(Wallet {
             signing_key,
             verifying_key,
             address: address.to_string(),
-        }
+        })
+    }
+
+    pub fn new_from(public_key_hex: &str, private_key_hex: &str, address: &str) -> Self {
+        Self::try_new_from(public_key_hex, private_key_hex, address)
+            .expect("invalid wallet keys")
     }
 
     pub fn get_wallet_data(&self) -> WalletData {
