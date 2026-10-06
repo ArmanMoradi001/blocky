@@ -1,4 +1,4 @@
-use crate::blockchain::blockchain::BlockChain;
+use crate::blockchain::blockchain::{BlockChain, Serialization};
 use crate::blockchain::transaction::Transaction as BlockchainTransaction;
 use crate::wallet::wallet::Wallet;
 use actix_web::{App, HttpResponse, HttpServer, web};
@@ -6,13 +6,6 @@ use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{fmt::Debug, sync::{Arc, Mutex}};
-
-
-#[derive(Serialize, Debug)]
-pub struct TransactionsInBlockChain {
-    transaction_count: usize,
-    transactions: Vec<BlockchainTransaction>,
-}
 
 //http:://localhost:5000/amount/0x12345
 #[derive(Serialize)]
@@ -53,6 +46,36 @@ pub struct TransferResponse {
     pub amount: u64,
     pub pending_in_pool: usize,
     pub note: String,
+}
+
+/// Human-readable transaction for API responses. The chain stores addresses
+/// as raw bytes; the webpage needs plain strings.
+#[derive(Serialize, Debug)]
+pub struct TransactionView {
+    pub sender: String,
+    pub recipient: String,
+    pub amount: u64,
+}
+
+impl From<&BlockchainTransaction> for TransactionView {
+    fn from(tx: &BlockchainTransaction) -> Self {
+        TransactionView {
+            sender: String::from_utf8_lossy(&tx.sender_address).into_owned(),
+            recipient: String::from_utf8_lossy(&tx.reciever_address).into_owned(),
+            amount: tx.value,
+        }
+    }
+}
+
+/// Human-readable block for API responses (hashes as hex, txs decoded).
+#[derive(Serialize, Debug)]
+pub struct BlockView {
+    pub index: usize,
+    pub nonce: i32,
+    pub previous_hash: String,
+    pub hash: String,
+    pub timestamp: u128,
+    pub transactions: Vec<TransactionView>,
 }
 
 impl ApiServer {
@@ -311,7 +334,6 @@ impl ApiServer {
             Err(e) if e.contains("insufficient") => {
                 HttpResponse::UnprocessableEntity().json(e)
             }
-            Err(e) if e.contains("duplicate") => HttpResponse::Conflict().json(e),
             Err(e) => HttpResponse::BadRequest().json(e),
         }
     }
@@ -320,16 +342,16 @@ impl ApiServer {
         let api_server = data.get_ref();
         let unlock_cache = api_server.cache.lock().unwrap();
         let block_chain = unlock_cache.get("blockchain").unwrap();
-        let mut get_transactions = TransactionsInBlockChain {
-            transaction_count: 0,
-            transactions: Vec::<BlockchainTransaction>::new(),
-        };
-        get_transactions.transactions = block_chain.get_transactions();
-        get_transactions.transaction_count = get_transactions.transactions.len();
-        debug!("show transactions in chain:{:?}", get_transactions);
+        let confirmed: Vec<TransactionView> = block_chain
+            .get_transactions()
+            .iter()
+            .map(TransactionView::from)
+            .collect();
+        let count = confirmed.len();
+        debug!("show transactions in chain:{:?}", confirmed);
         HttpResponse::Ok().json(serde_json::json!({
-            "transaction_count": get_transactions.transaction_count,
-            "transactions": get_transactions.transactions,
+            "transaction_count": count,
+            "transactions": confirmed,
             "pending_in_pool": block_chain.pending_count(),
         }))
     }
@@ -343,8 +365,30 @@ impl ApiServer {
     async fn get_index(&self) -> HttpResponse {
         let unlock_cache = self.cache.lock().unwrap();
         let blockchain = unlock_cache.get("blockchain").unwrap();
-        let blocks = blockchain.get_chain();
-        HttpResponse::Ok().json(blocks)
+        let views: Vec<BlockView> = blockchain
+            .get_chain()
+            .iter()
+            .enumerate()
+            .map(|(index, b)| {
+                let transactions: Vec<TransactionView> = b
+                    .raw_transactions()
+                    .iter()
+                    .map(|raw| {
+                        let tx = BlockchainTransaction::deserialization(raw.clone());
+                        TransactionView::from(&tx)
+                    })
+                    .collect();
+                BlockView {
+                    index,
+                    nonce: b.nonce(),
+                    previous_hash: hex::encode(b.previous_hash()),
+                    hash: hex::encode(b.hash()),
+                    timestamp: b.timestamp(),
+                    transactions,
+                }
+            })
+            .collect();
+        HttpResponse::Ok().json(views)
     }
 
     pub async fn get_index_handler(data: web::Data<Arc<ApiServer>>) -> HttpResponse {
@@ -376,6 +420,7 @@ impl ApiServer {
                 .route("/faucet", web::post().to(Self::faucet))
                 .route("/show_transactions", web::get().to(Self::show_transaction))
                 .route("/mining", web::get().to(Self::mining))
+                .route("/mining", web::post().to(Self::mining))
                 .route("/amount/{address}", web::get().to(Self::get_amount))
         });
 
