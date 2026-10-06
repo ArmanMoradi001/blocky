@@ -164,7 +164,7 @@ impl ApiServer {
 
     async fn get_wallet() -> HttpResponse {
         HttpResponse::Ok().content_type("text/html").body(
-            r#"
+            r##"
             <!DOCTYPE html>
             <html lang="en">
             <head>
@@ -173,34 +173,54 @@ impl ApiServer {
                <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
                <script>
                   $(function(){
+                    function show_status(msg, is_error) {
+                        const el = $("#status");
+                        el.text(msg);
+                        el.css("color", is_error ? "red" : "green");
+                    }
+                    function server_error(xhr) {
+                        // Actix returns JSON-encoded strings, e.g. "\"insufficient ...\"".
+                        try {
+                            const body = JSON.parse(xhr.responseText);
+                            return typeof body === "string" ? body : JSON.stringify(body);
+                        } catch (e) {
+                            return xhr.responseText || xhr.statusText || "request failed";
+                        }
+                    }
+
+                    // 1. Create a fresh wallet for this page load.
                     $.ajax({
                         url: "/get_wallet",
                         method: "GET",
                         success: function(response) {
                             console.log(response);
-                            $("\#public_key").val(response['public_key'])
-                            $("\#private_key").val(response['private_key'])
-                            $("\#blockchain_address").val(response['blockchain_address'])
+                            $("#public_key").val(response['public_key'])
+                            $("#private_key").val(response['private_key'])
+                            $("#blockchain_address").val(response['blockchain_address'])
+                            reload_amount()
                         },
-                        error: function(error) {
-                            console.log(error)
+                        error: function(xhr) {
+                            console.log(xhr)
+                            show_status("Failed to create wallet: " + server_error(xhr), true)
                         }
                     })
 
-                    $("\#send_money").click(function(){
-                        let confirm_text = 'Are you ready to send the given amount?'
-                        let confirm_result = confirm(confirm_text)
-                        if (!confirm_result) {
-                            alert('Transaction cancelled')
+                    $("#send_money").click(function(){
+                        const recipient = $("#recipient_address").val().trim()
+                        const amount = $("#send_amount").val().trim()
+                        if (!recipient) { show_status("Recipient address must not be empty", true); return }
+                        if (!amount) { show_status("Amount must not be empty", true); return }
+                        if (!confirm('Are you ready to send ' + amount + ' to ' + recipient + '?')) {
+                            show_status('Transaction cancelled', true)
                             return
                         }
 
-                        let transaction = {
-                            'private_key': $("\#private_key").val(),
-                            'blockchain_address': $("\#blockchain_address").val(),
-                            'public_key': $("\#public_key").val(),
-                            'recipient_address': $("\#recipient_address").val(),
-                            'amount': $("\#send_amount").val(),
+                        const transaction = {
+                            'private_key': $("#private_key").val(),
+                            'blockchain_address': $("#blockchain_address").val(),
+                            'public_key': $("#public_key").val(),
+                            'recipient_address': recipient,
+                            'amount': amount,
                         }
 
                         $.ajax({
@@ -210,35 +230,74 @@ impl ApiServer {
                             data: JSON.stringify(transaction),
                             success: function(response) {
                                 console.log(response)
-                                alert('success')
+                                show_status('Queued: ' + response.amount + ' -> ' + response.recipient + '. Press Mine to confirm.', false)
                             },
-                            error: function(error) {
-                                console.error(error)
-                                alert('error')
+                            error: function(xhr) {
+                                console.error(xhr)
+                                show_status('Transaction failed (' + xhr.status + '): ' + server_error(xhr), true)
+                            }
+                        })
+                    })
+
+                    // 2. Faucet: new wallets start at 0, so mint test coins first.
+                    $("#get_faucet").click(function(){
+                        const address = $("#blockchain_address").val().trim()
+                        const amount = $("#faucet_amount").val().trim() || "100"
+                        if (!address) { show_status("Wallet not loaded yet", true); return }
+                        $.ajax({
+                            url: "/faucet",
+                            method: "POST",
+                            contentType: "application/json",
+                            data: JSON.stringify({recipient_address: address, amount: amount}),
+                            success: function(response) {
+                                console.log(response)
+                                show_status('Faucet queued ' + response.amount + '. Press Mine to confirm.', false)
+                            },
+                            error: function(xhr) {
+                                console.error(xhr)
+                                show_status('Faucet failed (' + xhr.status + '): ' + server_error(xhr), true)
+                            }
+                        })
+                    })
+
+                    // 3. Mining confirms queued (faucet + transfer) transactions.
+                    $("#mine").click(function(){
+                        $.ajax({
+                            url: "/mining",
+                            method: "GET",
+                            success: function(response) {
+                                console.log(response)
+                                show_status('Mined a block. Balance updated below.', false)
+                                reload_amount()
+                            },
+                            error: function(xhr) {
+                                console.error(xhr)
+                                show_status('Mining failed (' + xhr.status + '): ' + server_error(xhr), true)
                             }
                         })
                     })
 
                     function reload_amount() {
-                        const address = $("\#blockchain_address").val()
-                        console.log("get amount for address:", address)
-                        const url = `/amount/${address}`
-                        console.log("query amount url: ", url)
+                        const address = $("#blockchain_address").val()
+                        if (!address || !address.trim()) {
+                            return
+                        }
+                        const url = "/amount/" + address.trim()
                         $.ajax({
                             url: url,
                             type: "GET",
                             success: function(response) {
                                 let amount = response["amount"]
-                                $("\#input_amount").text(amount)
+                                $("#input_amount").text(amount)
                                 console.log(amount)
                             },
-                            error: function(error) {
-                                console.error(error)
+                            error: function(xhr) {
+                                console.error(xhr)
                             }
                         })
                     }
 
-                    $("\#refresh_wallet").click(function(){
+                    $("#refresh_wallet").click(function(){
                         reload_amount()
                     })
 
@@ -249,19 +308,35 @@ impl ApiServer {
             <body>
                 <div>
                   <h1>Wallet</h1>
-                   <div id="input_amount">0</div>
+                   <div>Balance: <span id="input_amount">0</span></div>
+                   <div id="status"></div>
                    <button id="refresh_wallet">Refresh Wallet</button>
-                   <p>Publick Key</p>
-                   <textarea id="public_key" row="2" cols="100">
+                   <p>Public Key</p>
+                   <textarea id="public_key" rows="2" cols="100">
                    </textarea>
 
                    <p>Private Key</p>
-                   <textarea id="private_key" row="1" cols="100">
+                   <textarea id="private_key" rows="1" cols="100">
                    </textarea>
 
                     <p>Blockchain address</p>
-                   <textarea id="blockchain_address" row="1" cols="100">
+                   <textarea id="blockchain_address" rows="1" cols="100">
                    </textarea>
+                </div>
+
+                <div>
+                    <h1>Get Test Coins (faucet)</h1>
+                    <div>
+                        Amount: <input id="faucet_amount" type="text" value="100"/>
+                        <button id="get_faucet">Get Coins</button>
+                    </div>
+                </div>
+
+                <div>
+                    <h1>Mine</h1>
+                    <div>
+                        <button id="mine">Mine a Block (confirm pending)</button>
+                    </div>
                 </div>
 
                 <div>
@@ -277,7 +352,7 @@ impl ApiServer {
 
             </body>
             </html>
-            "#
+            "##
         )
     }
 
