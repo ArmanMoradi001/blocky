@@ -110,6 +110,22 @@ impl Block {
         hasher.update(bin);
         hasher.finalize().to_vec()
     }
+
+    pub fn nonce(&self) -> i32 {
+        self.nonce
+    }
+
+    pub fn previous_hash(&self) -> &[u8] {
+        &self.previous_hash
+    }
+
+    pub fn timestamp(&self) -> u128 {
+        self.time_stamp
+    }
+
+    pub fn raw_transactions(&self) -> &[Vec<u8>] {
+        &self.transactions
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -265,14 +281,18 @@ impl BlockChain {
 
         // Minting transactions create funds out of thin air, so they are
         // exempt from the balance check. Everyone else must afford it from
-        // confirmed (mined) balance.
-        if !is_reward && self.calculate_total_amount(tx.sender.clone()) < tx.amount as i64 {
-            println!(
-                "Invalid balance: {} has {}",
-                tx.sender,
-                self.calculate_total_amount(tx.sender.clone())
-            );
-            return Err("insufficient confirmed balance (mine pending transactions first)".to_string());
+        // confirmed (mined) balance minus what they already have queued in
+        // the mempool (prevents double-spending unconfirmed funds).
+        if !is_reward {
+            let confirmed = self.calculate_total_amount(tx.sender.clone());
+            let pending_out = self.pending_spent_by(&tx.sender);
+            if confirmed - pending_out < tx.amount as i64 {
+                println!(
+                    "Invalid balance: {} has confirmed {} with {} pending",
+                    tx.sender, confirmed, pending_out
+                );
+                return Err("insufficient confirmed balance (mine pending transactions first)".to_string());
+            }
         }
 
         let btx = Transaction {
@@ -281,14 +301,27 @@ impl BlockChain {
             value: tx.amount,
         };
 
-        for tx_in_pool in self.transactions_pool.iter() {
-            if *tx_in_pool == btx.serialization() {
-                return Err("duplicate transaction already in pool".to_string());
-            }
-        }
+        // NOTE: no duplicate rejection here. The on-chain Transaction drops
+        // the wallet signature, so two legitimate transfers with the same
+        // sender/recipient/amount serialize identically. Rejecting "duplicates"
+        // would block repeated sends from the webpage. Double-spends are
+        // prevented by the balance check above instead.
 
         self.transactions_pool.push(btx.serialization());
         Ok(())
+    }
+
+    /// Total amount `address` has already queued as a sender in the mempool.
+    /// Minting (MINING_SENDER) outputs are excluded since they create funds.
+    fn pending_spent_by(&self, address: &str) -> i64 {
+        let mut spent: i64 = 0;
+        for raw in self.transactions_pool.iter() {
+            let tx = Transaction::deserialization(raw.clone());
+            if tx.sender_address == address.as_bytes().to_vec() {
+                spent += tx.value as i64;
+            }
+        }
+        spent
     }
 
     /// Mint `amount` new coins to `recipient` (test faucet). Uses the
