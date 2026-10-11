@@ -12,6 +12,12 @@ Each node keeps an in-memory chain, supports signed transfers, a test-coin fauce
 - Proof-of-work mining to confirm pending transactions
 - Wallet dashboard (`/wallet`) with balance, faucet, mining, and send flows
 - Human-readable JSON views for blocks and transactions
+- SWIM-style gossip membership so nodes discover each other over UDP
+
+## Documentation
+
+Section-by-section guides live in [`docs/`](docs/README.md): overview,
+network, membership, api-server, blockchain, wallet, crypto.
 
 ## Project structure
 
