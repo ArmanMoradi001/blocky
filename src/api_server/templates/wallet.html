@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MiniBlock Wallet</title>
+  <style>
+{{STYLE}}
+  </style>
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+  <script>
+{{SCRIPT}}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <div class="brand">
+        <div class="logo">◈</div>
+        <div>
+          <h1>MiniBlock</h1>
+          <small>Wallet Dashboard</small>
+        </div>
+      </div>
+      <div class="balance-pill">
+        <div>
+          <div class="label">Balance</div>
+          <div class="value"><span id="input_amount">0</span> <span style="font-size:13px;color:var(--muted)">coins</span></div>
+        </div>
+        <button class="btn secondary" id="refresh_wallet">Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="status" class="status"></div>
+
+    <div class="grid">
+      <section class="card">
+        <span class="pill-step">Step 1 · Identity</span>
+        <h2>Wallet details</h2>
+        <p class="sub">Auto-generated on page load. Keep your private key secret.</p>
+        <div class="field">
+          <label for="public_key">Public Key</label>
+          <textarea id="public_key" rows="3" readonly placeholder="Loading…"></textarea>
+        </div>
+        <div class="field">
+          <label for="private_key">Private Key</label>
+          <textarea id="private_key" rows="2" readonly placeholder="Loading…"></textarea>
+        </div>
+        <div class="field">
+          <label for="blockchain_address">Blockchain Address</label>
+          <textarea id="blockchain_address" rows="2" readonly placeholder="Loading…"></textarea>
+        </div>
+      </section>
+
+      <div style="display:grid;gap:18px;align-content:start">
+        <section class="card">
+          <span class="pill-step">Step 2 · Fund</span>
+          <h2>Get test coins</h2>
+          <p class="sub">New wallets start at 0. Mint test coins, then mine to confirm.</p>
+          <div class="field">
+            <label for="faucet_amount">Amount</label>
+            <div class="row">
+              <input id="faucet_amount" type="text" value="100" />
+              <button id="get_faucet" class="btn secondary" style="flex:0 0 auto">Get Coins</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <span class="pill-step">Step 3 · Confirm</span>
+          <h2>Mine a block</h2>
+          <p class="sub">Confirms all queued faucet + transfer transactions.</p>
+          <button id="mine" class="btn block">⛏ Mine a Block</button>
+          <div class="hint">Tip: balance auto-refreshes every 3s after mining.</div>
+        </section>
+
+        <section class="card">
+          <span class="pill-step">Step 4 · Spend</span>
+          <h2>Send money</h2>
+          <p class="sub">Queue a transfer, then press Mine to confirm it.</p>
+          <div class="field">
+            <label for="recipient_address">Recipient address</label>
+            <input id="recipient_address" type="text" placeholder="paste recipient address…" />
+          </div>
+          <div class="field">
+            <label for="send_amount">Amount</label>
+            <input id="send_amount" type="text" placeholder="e.g. 10" />
+          </div>
+          <button id="send_money" class="btn block">Send →</button>
+        </section>
+      </div>
+    </div>
+
+    <div class="footer">MiniBlock · Actix API: <span style="font-family:monospace">/amount · /faucet · /transaction · /mining · /show_transactions</span></div>
+  </main>
+</body>
+</html>
