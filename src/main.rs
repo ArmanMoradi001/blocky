@@ -2,9 +2,11 @@ mod api_server;
 mod blockchain;
 mod crypto;
 mod wallet;
+mod network;
 use core::hash;
 use std::result;
 
+use tokio;
 use actix_web::{App, HttpServer, Responder, get};
 use api_server::api::ApiServer;
 use blockchain::blockchain::Serialization;
@@ -45,43 +47,10 @@ pub fn get_block_search_result(result: BlockSearchResult) {
     }
 }
 
-#[actix_web::main]
+// // #[actix_web::main]
+// #[tokio::main]
+#[tokio::main]
 async fn main() {
     env_logger::init();
-
-    let server = ApiServer::new(5000);
-    server.run().await;
-
-    // let miner = Wallet::new();
-
-    // let mut blockchain = BlockChain::new(miner.address_str());
-
-    // let wallet_a = Wallet::new();
-    // let wallet_b = Wallet::new();
-
-    // let tx_a_b = wallet_a.sign_transaction(&wallet_b.address_str(), 100);
-
-    // println!(
-    //     "the transaction state is: {}",
-    //     blockchain.add_transaction(&tx_a_b)
-    // );
-    // blockchain.mining();
-    // blockchain.print_blockchain();
-
-    // println!("The blcance for A is: {}", blockchain.calculate_total_amount(wallet_a.address_str()));
-    // println!("The blcance for B is: {}", blockchain.calculate_total_amount(wallet_b.address_str()));
-    // println!("The blcance for miner is: {}", blockchain.calculate_total_amount(miner.address_str()));
+    network::network::run_server().await;
 }
-
-// #[get("/")]
-// async fn hello() -> impl Responder {
-//     "Hello, world!"
-// }
-
-// #[actix_web::main]
-// async fn main() -> std::io::Result<()> {
-//     HttpServer::new(|| App::new().service(hello))
-//         .bind(("127.0.0.1", 8080))?
-//         .run()
-//         .await
-// }
