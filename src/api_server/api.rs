@@ -25,14 +25,19 @@ use super::views::render_wallet_page;
 
 #[derive(Clone, Debug)]
 pub struct ApiServer {
+    host: String,
     port: u16,
     cache: Arc<Mutex<HashMap<String, BlockChain>>>,
 }
 
 impl ApiServer {
-    pub fn new(port: u16) -> Self {
+    pub fn new(host: impl Into<String>, port: u16) -> Self {
         let cache = Arc::new(Mutex::new(HashMap::new()));
-        let api_server = ApiServer { port, cache };
+        let api_server = ApiServer {
+            host: host.into(),
+            port,
+            cache,
+        };
 
         let wallet_miner = Wallet::new();
         {
@@ -262,9 +267,9 @@ impl ApiServer {
                 .configure(Self::configure_routes)
         });
 
-        println!("Server running on port:{}", self.port);
+        println!("Server running on {}:{}", self.host, self.port);
         server
-            .bind(("0.0.0.0", self.port))
+            .bind((self.host.as_str(), self.port))
             .unwrap()
             .run()
             .await

@@ -1,13 +1,20 @@
 
-use tokio;
 use crate::api_server::api::ApiServer;
+use tokio;
+
+/// One entry per node: same default port, distinct loopback IP.
+/// Each node keeps its own independent in-memory chain.
+const NODES: [(&str, u16); 3] = [
+    ("127.0.0.1", 5000),
+    ("127.0.0.2", 5000),
+    ("127.0.0.3", 5000),
+];
 
 pub async fn run_server() {
-    let ports = vec![5000, 5001, 5002];
     let mut handles = vec![];
 
-    for port in ports {
-        let server = ApiServer::new(port);
+    for (host, port) in NODES {
+        let server = ApiServer::new(host, port);
 
         let handle = tokio::spawn(async move {
             server.run().await;
