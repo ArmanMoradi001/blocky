@@ -69,3 +69,50 @@ pub struct BlockView {
     pub timestamp: u128,
     pub transactions: Vec<TransactionView>,
 }
+
+// -- Nakamoto sync DTOs ---------------------------------------------------
+// Wire format uses hex strings so any HTTP client can reconstruct blocks.
+
+/// `GET /chain/height` — cheap comparison before a full pull.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChainHeightResponse {
+    pub height: usize,
+    pub tip_hash: String,
+    pub genesis_hash: String,
+}
+
+/// One full block on the wire.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BlockDto {
+    pub nonce: i32,
+    pub previous_hash: String,
+    pub timestamp: u128,
+    pub transactions: Vec<String>,
+    pub hash: String,
+}
+
+/// `GET /chain` — full chain for longest-valid-chain sync (small chains only).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChainResponse {
+    pub height: usize,
+    pub tip_hash: String,
+    pub genesis_hash: String,
+    pub blocks: Vec<BlockDto>,
+}
+
+/// Header for `GET /chain/headers` (header-first sync without bodies).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BlockHeaderDto {
+    pub index: usize,
+    pub hash: String,
+    pub previous_hash: String,
+    pub nonce: i32,
+    pub timestamp: u128,
+    pub tx_count: usize,
+}
+
+/// `GET /chain/pending` / `POST /chain/pending` — mempool reconciliation.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PendingResponse {
+    pub pending: Vec<String>,
+}
