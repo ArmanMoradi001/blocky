@@ -52,8 +52,21 @@ pub async fn run_server() {
         handles.push(handle);
     }
 
-    for handle in handles {
-        handle.await.unwrap();
+    // Wait for all nodes in a separate task so Ctrl+C (SIGINT) can
+    // interrupt the wait. Without this, the infinite membership/sync loops
+    // keep the process alive forever and Ctrl+C appears to do nothing.
+    let mut waiter = tokio::spawn(async move {
+        for handle in handles {
+            let _ = handle.await;
+        }
+    });
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("network: SIGINT received, shutting down nodes");
+            waiter.abort();
+        }
+        _ = &mut waiter => {}
     }
 }
 
