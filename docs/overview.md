@@ -42,17 +42,17 @@ append to the mempool (`transactions_pool`).
 ## Key facts
 
 - Consensus: proof-of-work, difficulty 3 leading hex zeros, fixed reward of 1.
-- Finality: longest chain wins implicitly — but cross-node sync is **not**
-  implemented yet; each node's chain is independent (see Limitations).
+- Finality: longest valid chain wins (Nakamoto sync: `GET /chain/height`,
+  `GET /chain`, `POST /chain/block`, `GET/POST /chain/pending` + 2s
+  background pull, push on mine/tx).
 - Storage: everything is in-memory. Restarting a node loses its chain.
 - Crypto: ECDSA on `secp256r1` (P-256), Bitcoin-style Base58 addresses.
 
 ## Limitations (global)
 
-- **No chain sync.** Nodes discover each other (membership) but do not exchange
-  blocks or transactions yet. Balances on one node are invisible on others.
 - **Single process.** All three nodes live in one Tokio process (`network.md`);
-  there are no per-node binaries, CLI flags, or config files.
+  there are no per-node binaries, CLI flags, or config files. They sync over
+  HTTP, so splitting them into separate processes later keeps working.
 - **No persistence.** In-memory `HashMap` + `Vec` state only.
 - **No authentication/encryption** on API or gossip traffic; private keys are
   passed in plaintext JSON (test-grade security throughout).

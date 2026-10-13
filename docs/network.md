@@ -55,7 +55,8 @@ To change the cluster, edit `NODES` (and keep UDP ports collision-free via
 - **Single process.** All nodes share one Tokio runtime and fate — killing one
   kills all, so failure-detection paths (suspect/dead) cannot be exercised
   until nodes run as separate processes.
-- **Independent chains.** Each `ApiServer` owns a separate `BlockChain` with
-  its own miner wallet. No blocks, transactions, or mempools are shared or
-  synced (see `overview.md`).
+- **Independent mining, shared ledger.** Each `ApiServer` mines with its own
+  miner wallet, but chains converge via Nakamoto longest-valid-chain sync
+  (`GET /chain/height`, `GET /chain`, `POST /chain/block`, mempool
+  `GET/POST /chain/pending`; 2s pull + push on mine/tx, see `sync.rs`).
 - **No graceful shutdown.** Tasks run until killed; no signal handling.
