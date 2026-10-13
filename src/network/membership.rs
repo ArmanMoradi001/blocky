@@ -167,6 +167,23 @@ impl Membership {
             .collect()
     }
 
+    pub fn self_addr(&self) -> SocketAddr {
+        self.self_addr
+    }
+
+    /// UDP addresses of Alive peers (excluding self) — used by chain sync to
+    /// derive HTTP peer addresses (`udp_port - UDP_PORT_OFFSET`).
+    pub async fn alive_addrs(&self) -> Vec<SocketAddr> {
+        let members = self.members.lock().await;
+        members
+            .iter()
+            .filter(|(addr, m)| {
+                **addr != self.self_addr && m.status == MemberStatus::Alive
+            })
+            .map(|(addr, _)| *addr)
+            .collect()
+    }
+
     // -- messaging ------------------------------------------------------
 
     async fn send_to(&self, target: SocketAddr, msg: &SwimMessage) {

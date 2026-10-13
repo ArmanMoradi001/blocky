@@ -1,14 +1,18 @@
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
+use log::info;
 use tokio;
 
 use crate::api_server::api::ApiServer;
 
 use super::membership::{Membership, MembershipConfig};
+use super::sync;
 
 /// One entry per node: same default HTTP port, distinct loopback IP.
-/// Each node keeps its own independent in-memory chain.
+/// Each node keeps its own chain, converged via Nakamoto longest-valid-chain.
 /// Membership gossip runs on UDP at `http_port + UDP_PORT_OFFSET`.
 const NODES: [(&str, u16); 3] = [
     ("127.0.0.1", 5000),
@@ -16,7 +20,10 @@ const NODES: [(&str, u16); 3] = [
     ("127.0.0.3", 5000),
 ];
 
-const UDP_PORT_OFFSET: u16 = 10_000;
+pub(crate) const UDP_PORT_OFFSET: u16 = 10_000;
+
+/// How often each node pulls the tallest peer chain + mempools.
+const SYNC_INTERVAL: Duration = Duration::from_secs(2);
 
 fn udp_addr(http_host: &str, http_port: u16) -> SocketAddr {
     format!("{http_host}:{}", http_port + UDP_PORT_OFFSET)
@@ -50,12 +57,42 @@ pub async fn run_server() {
     }
 }
 
-/// One node: HTTP API + UDP membership gossip side by side.
+/// One node: HTTP API + UDP membership gossip + Nakamoto sync loop.
 async fn run_node(http_host: &str, http_port: u16, udp_addr: SocketAddr, seeds: Vec<SocketAddr>) {
     let membership = Membership::bind(udp_addr, seeds, MembershipConfig::default()).await;
-    let server = ApiServer::new(http_host, http_port);
+    let mut server = ApiServer::new(http_host, http_port);
+    server.set_membership(membership.clone());
+    let api = Arc::new(server);
+    let sync_api = api.clone();
+    let sync_membership = membership.clone();
 
-    tokio::join!(membership.run(), async {
-        server.run().await;
+    let sync_task = tokio::spawn(async move {
+        // Let SWIM discover peers + HTTP bind before first pull.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        loop {
+            let udp_peers = sync_membership.alive_addrs().await;
+            let http_peers: Vec<SocketAddr> = udp_peers
+                .into_iter()
+                .filter_map(|u| sync::http_addr_from_udp(u, UDP_PORT_OFFSET))
+                .collect();
+            let summary = sync::sync_once(&sync_api.cache(), http_peers).await;
+            info!(
+                "sync: {}:{} {}",
+                sync_api.host_str(),
+                sync_api.port(),
+                summary
+            );
+            tokio::time::sleep(SYNC_INTERVAL).await;
+        }
     });
+
+    tokio::join!(
+        membership.run(),
+        async {
+            api.run().await;
+        },
+        async {
+            let _ = sync_task.await;
+        }
+    );
 }
