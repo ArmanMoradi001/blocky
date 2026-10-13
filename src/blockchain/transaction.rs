@@ -18,6 +18,50 @@ impl Transaction {
             value,
         }
     }
+
+    /// Non-panicking decode used by p2p validation. Returns `None` on
+    /// truncated/trailing bytes instead of asserting.
+    pub fn try_deserialization(bytes: &[u8]) -> Option<Transaction> {
+        let mut pos = 0usize;
+        if bytes.len() < pos + 8 {
+            return None;
+        }
+        let sender_len = u64::from_be_bytes(bytes[pos..pos + 8].try_into().ok()?) as usize;
+        pos += 8;
+        // Sanity cap: addresses are Base58 strings (< 100 bytes).
+        if sender_len > 1024 || bytes.len() < pos + sender_len {
+            return None;
+        }
+        let sender_address = bytes[pos..pos + sender_len].to_vec();
+        pos += sender_len;
+
+        if bytes.len() < pos + 8 {
+            return None;
+        }
+        let receiver_len = u64::from_be_bytes(bytes[pos..pos + 8].try_into().ok()?) as usize;
+        pos += 8;
+        if receiver_len > 1024 || bytes.len() < pos + receiver_len {
+            return None;
+        }
+        let reciever_address = bytes[pos..pos + receiver_len].to_vec();
+        pos += receiver_len;
+
+        if bytes.len() < pos + 8 {
+            return None;
+        }
+        let value = u64::from_be_bytes(bytes[pos..pos + 8].try_into().ok()?);
+        pos += 8;
+
+        if pos != bytes.len() {
+            return None;
+        }
+
+        Some(Transaction {
+            sender_address,
+            reciever_address,
+            value,
+        })
+    }
 }
 
 impl Serialization<Transaction> for Transaction {
@@ -38,53 +82,12 @@ impl Serialization<Transaction> for Transaction {
     }
 
     fn deserialization(bytes: Vec<u8>) -> Transaction {
-        let mut pos = 0;
-
-        let need = |pos: usize, n: usize, what: &str| {
-            assert!(
-                bytes.len() >= pos + n,
-                "Transaction::deserialization: truncated {what} (need {} bytes at pos {pos}, got len {})",
-                n,
+        match Self::try_deserialization(&bytes) {
+            Some(tx) => tx,
+            None => panic!(
+                "Transaction::deserialization: malformed {} byte(s)",
                 bytes.len()
-            );
-        };
-
-        // sender_len: u64 BE
-        need(pos, 8, "sender_len");
-        let sender_len = u64::from_be_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
-        pos += 8;
-
-        // sender_address
-        need(pos, sender_len, "sender_address");
-        let sender_address = bytes[pos..pos + sender_len].to_vec();
-        pos += sender_len;
-
-        // receiver_len: u64 BE
-        need(pos, 8, "receiver_len");
-        let receiver_len = u64::from_be_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
-        pos += 8;
-
-        // receiver_address
-        need(pos, receiver_len, "receiver_address");
-        let reciever_address = bytes[pos..pos + receiver_len].to_vec();
-        pos += receiver_len;
-
-        // value: u64 BE
-        need(pos, 8, "value");
-        let value = u64::from_be_bytes(bytes[pos..pos + 8].try_into().unwrap());
-        pos += 8;
-
-        assert!(
-            pos == bytes.len(),
-            "Transaction::deserialization: trailing {} byte(s) (len {}, consumed {pos})",
-            bytes.len() - pos,
-            bytes.len()
-        );
-
-        Transaction {
-            sender_address,
-            reciever_address,
-            value,
+            ),
         }
     }
 }
