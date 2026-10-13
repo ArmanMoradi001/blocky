@@ -601,11 +601,20 @@ impl BlockChain {
 
     /// Merge mempool entries learned from a peer. Entries are raw on-chain
     /// txs (signatures already checked at the entry node); we check structure
-    /// + spendability against our current chain. Returns newly added count.
+    /// + spendability against our current chain. Entries already confirmed in
+    /// our local chain are skipped — without this, the background pull
+    /// re-imports txs from lagging peers that haven't adopted our latest
+    /// block yet, and they get mined a second time (double mint/spend).
+    /// Returns newly added count.
     pub fn merge_pending_raw(&mut self, raws: Vec<Vec<u8>>) -> usize {
+        let confirmed: std::collections::HashSet<Vec<u8>> = self
+            .chain
+            .iter()
+            .flat_map(|b| b.raw_transactions().iter().cloned())
+            .collect();
         let mut added = 0;
         for raw in raws {
-            if self.transactions_pool.contains(&raw) {
+            if confirmed.contains(&raw) || self.transactions_pool.contains(&raw) {
                 continue;
             }
             let Some(tx) = Transaction::try_deserialization(&raw) else {
