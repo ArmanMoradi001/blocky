@@ -249,3 +249,102 @@ pub async fn broadcast_pending(peers: Vec<SocketAddr>, raws: Vec<Vec<u8>>) {
         });
     }
 }
+
+// -- tests -----------------------------------------------------------------
+// T1.3: sync wire-format (block DTO) round-trip + rejection.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn funded_chain() -> BlockChain {
+        let mut bc = BlockChain::new("miner".to_string());
+        bc.faucet("alice".to_string(), 100).unwrap();
+        bc.mining();
+        bc
+    }
+
+    #[test]
+    fn dto_round_trip_preserves_every_block() {
+        let bc = funded_chain();
+        for block in bc.get_chain() {
+            let dto = block_to_dto(block);
+            let back = dto_to_block(&dto).expect("round trip must succeed");
+            assert_eq!(back, *block);
+            assert_eq!(back.raw_transactions(), block.raw_transactions());
+        }
+    }
+
+    #[test]
+    fn dto_rejects_tampered_fields() {
+        let bc = funded_chain();
+        let good = block_to_dto(bc.last_block());
+
+        let mut d = good.clone();
+        d.nonce += 1;
+        assert!(dto_to_block(&d).is_err(), "tampered nonce must fail hash check");
+
+        let mut d = good.clone();
+        d.timestamp += 1;
+        assert!(
+            dto_to_block(&d).is_err(),
+            "tampered timestamp must fail hash check"
+        );
+
+        let mut d = good.clone();
+        d.hash = "00".repeat(32);
+        assert!(
+            dto_to_block(&d).is_err(),
+            "forged hash field must fail hash check"
+        );
+
+        let mut d = good.clone();
+        d.transactions.push(hex::encode(b"rogue-bytes"));
+        assert!(
+            dto_to_block(&d).is_err(),
+            "injected transaction must fail hash check"
+        );
+    }
+
+    #[test]
+    fn dto_rejects_malformed_hex() {
+        let bc = funded_chain();
+        let mut d = block_to_dto(bc.last_block());
+        d.previous_hash = "zz".to_string();
+        assert!(dto_to_block(&d).is_err());
+
+        let mut d = block_to_dto(bc.last_block());
+        d.transactions = vec!["zz".to_string()];
+        assert!(dto_to_block(&d).is_err());
+    }
+
+    #[test]
+    fn http_addr_conversion_and_underflow() {
+        let udp: SocketAddr = "127.0.0.1:15000".parse().unwrap();
+        assert_eq!(
+            http_addr_from_udp(udp, 10_000).unwrap().to_string(),
+            "127.0.0.1:5000"
+        );
+        let low: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        assert!(
+            http_addr_from_udp(low, 10_000).is_none(),
+            "port below offset must not wrap"
+        );
+    }
+
+    #[test]
+    fn chain_response_json_round_trip() {
+        let bc = funded_chain();
+        let resp = ChainResponse {
+            height: bc.height(),
+            tip_hash: hex::encode(bc.tip_hash()),
+            genesis_hash: hex::encode(Block::genesis_hash()),
+            blocks: bc.get_chain().iter().map(block_to_dto).collect(),
+        };
+        let s = serde_json::to_string(&resp).unwrap();
+        let back: ChainResponse = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.blocks.len(), bc.height());
+        for dto in &back.blocks {
+            dto_to_block(dto).expect("wire DTO must decode");
+        }
+    }
+}

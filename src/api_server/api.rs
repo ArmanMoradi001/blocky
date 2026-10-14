@@ -553,3 +553,395 @@ impl ApiServer {
             .expect("Error running the server");
     }
 }
+
+// -- tests -----------------------------------------------------------------
+// T1.6: API happy paths + bad input, through the real route table.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::test;
+
+    macro_rules! test_app {
+        () => {
+            test::init_service(
+                actix_web::App::new()
+                    .app_data(web::Data::new(std::sync::Arc::new(ApiServer::new(
+                        "127.0.0.1",
+                        0,
+                    ))))
+                    .configure(ApiServer::configure_routes),
+            )
+            .await
+        };
+    }
+
+    async fn json_body(resp: actix_web::dev::ServiceResponse) -> serde_json::Value {
+        let body = test::read_body(resp).await;
+        serde_json::from_slice(&body).expect("response must be JSON")
+    }
+
+    async fn post_json(
+        app: &impl actix_web::dev::Service<
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
+        uri: &str,
+        payload: &serde_json::Value,
+    ) -> actix_web::dev::ServiceResponse {
+        let req = test::TestRequest::post()
+            .uri(uri)
+            .set_json(payload)
+            .to_request();
+        test::call_service(app, req).await
+    }
+
+    async fn new_wallet(
+        app: &impl actix_web::dev::Service<
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
+    ) -> serde_json::Value {
+        let req = test::TestRequest::get().uri("/get_wallet").to_request();
+        json_body(test::call_service(app, req).await).await
+    }
+
+    #[actix_web::test]
+    async fn get_wallet_returns_key_triple() {
+        let app = test_app!();
+        let req = test::TestRequest::get().uri("/get_wallet").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        let body = json_body(resp).await;
+        for field in ["public_key", "private_key", "blockchain_address"] {
+            assert!(
+                body[field].as_str().is_some_and(|s| !s.is_empty()),
+                "missing {field}"
+            );
+        }
+    }
+
+    #[actix_web::test]
+    async fn faucet_rejects_bad_input() {
+        let app = test_app!();
+        for (recipient, amount) in [
+            ("", "10"),    // empty
+            ("   ", "10"), // blank
+            ("alice", "0"),
+            ("alice", "abc"),
+            ("alice", "-5"),
+            ("alice", ""),
+        ] {
+            let resp = post_json(
+                &app,
+                "/faucet",
+                &serde_json::json!({"recipient_address": recipient, "amount": amount}),
+            )
+            .await;
+            assert_eq!(
+                resp.status().as_u16(),
+                400,
+                "faucet {recipient:?}/{amount:?} must be 400"
+            );
+        }
+    }
+
+    #[actix_web::test]
+    async fn faucet_then_mine_confirms_balance() {
+        let app = test_app!();
+        let resp = post_json(
+            &app,
+            "/faucet",
+            &serde_json::json!({"recipient_address": "alice", "amount": "50"}),
+        )
+        .await;
+        assert_eq!(resp.status().as_u16(), 200);
+
+        // Unconfirmed before mining.
+        let req = test::TestRequest::get().uri("/amount/alice").to_request();
+        let body = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(body["amount"], 0);
+
+        let req = test::TestRequest::post().uri("/mining").to_request();
+        assert_eq!(test::call_service(&app, req).await.status().as_u16(), 200);
+
+        let req = test::TestRequest::get().uri("/amount/alice").to_request();
+        let body = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(body["amount"], 50);
+    }
+
+    #[actix_web::test]
+    async fn transaction_rejects_bad_input() {
+        let app = test_app!();
+        let wallet = new_wallet(&app).await;
+        let addr = wallet["blockchain_address"].as_str().unwrap().to_string();
+        let payload = |sender: &str, recipient: &str, amount: &str| {
+            serde_json::json!({
+                "private_key": wallet["private_key"],
+                "public_key": wallet["public_key"],
+                "blockchain_address": sender,
+                "recipient_address": recipient,
+                "amount": amount,
+            })
+        };
+        for (sender, recipient, amount) in [
+            ("", "bob", "10"),          // empty sender
+            (addr.as_str(), "", "10"),  // empty recipient
+            (addr.as_str(), addr.as_str(), "10"), // self-transfer
+            (addr.as_str(), "bob", "0"),
+            (addr.as_str(), "bob", "abc"),
+        ] {
+            let resp = post_json(&app, "/transaction", &payload(sender, recipient, amount)).await;
+            assert_eq!(
+                resp.status().as_u16(),
+                400,
+                "transaction {sender:?}/{recipient:?}/{amount:?} must be 400"
+            );
+        }
+        // Corrupt keys must not panic: they become a 400.
+        let mut bad_keys = payload(addr.as_str(), "bob", "10");
+        bad_keys["private_key"] = serde_json::json!("zz");
+        let resp = post_json(&app, "/transaction", &bad_keys).await;
+        assert_eq!(resp.status().as_u16(), 400);
+    }
+
+    #[actix_web::test]
+    async fn transaction_full_flow_confirms_after_mine() {
+        let app = test_app!();
+        let sender = new_wallet(&app).await;
+        let recipient = new_wallet(&app).await;
+        let s_addr = sender["blockchain_address"].as_str().unwrap().to_string();
+        let r_addr = recipient["blockchain_address"].as_str().unwrap().to_string();
+
+        post_json(
+            &app,
+            "/faucet",
+            &serde_json::json!({"recipient_address": s_addr, "amount": "50"}),
+        )
+        .await;
+        let req = test::TestRequest::post().uri("/mining").to_request();
+        assert_eq!(test::call_service(&app, req).await.status().as_u16(), 200);
+
+        let resp = post_json(
+            &app,
+            "/transaction",
+            &serde_json::json!({
+                "private_key": sender["private_key"],
+                "public_key": sender["public_key"],
+                "blockchain_address": s_addr,
+                "recipient_address": r_addr,
+                "amount": "20",
+            }),
+        )
+        .await;
+        assert_eq!(resp.status().as_u16(), 201);
+
+        // Queued but unconfirmed.
+        let req = test::TestRequest::get().uri("/show_transactions").to_request();
+        let body = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(body["pending_in_pool"], 1);
+
+        let req = test::TestRequest::post().uri("/mining").to_request();
+        assert_eq!(test::call_service(&app, req).await.status().as_u16(), 200);
+
+        let req = test::TestRequest::get()
+            .uri(&format!("/amount/{s_addr}"))
+            .to_request();
+        let body = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(body["amount"], 30);
+
+        let req = test::TestRequest::get()
+            .uri(&format!("/amount/{r_addr}"))
+            .to_request();
+        let body = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(body["amount"], 20);
+    }
+
+    #[actix_web::test]
+    async fn transaction_rejects_insufficient_funds() {
+        let app = test_app!();
+        let sender = new_wallet(&app).await;
+        let s_addr = sender["blockchain_address"].as_str().unwrap().to_string();
+        post_json(
+            &app,
+            "/faucet",
+            &serde_json::json!({"recipient_address": s_addr, "amount": "10"}),
+        )
+        .await;
+        let req = test::TestRequest::post().uri("/mining").to_request();
+        test::call_service(&app, req).await;
+
+        let resp = post_json(
+            &app,
+            "/transaction",
+            &serde_json::json!({
+                "private_key": sender["private_key"],
+                "public_key": sender["public_key"],
+                "blockchain_address": s_addr,
+                "recipient_address": "bob",
+                "amount": "999",
+            }),
+        )
+        .await;
+        assert_eq!(resp.status().as_u16(), 422);
+    }
+
+    #[actix_web::test]
+    async fn mining_returns_ok() {
+        let app = test_app!();
+        let req = test::TestRequest::post().uri("/mining").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(json_body(resp).await, "mining ok");
+    }
+
+    #[actix_web::test]
+    async fn chain_height_and_full_are_consistent() {
+        let app = test_app!();
+        let req = test::TestRequest::get().uri("/chain/height").to_request();
+        let height = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(height["height"], 2); // genesis + first reward
+        assert!(!height["tip_hash"].as_str().unwrap().is_empty());
+        assert!(!height["genesis_hash"].as_str().unwrap().is_empty());
+
+        let req = test::TestRequest::get().uri("/chain").to_request();
+        let full = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(full["height"], 2);
+        assert_eq!(full["blocks"].as_array().unwrap().len(), 2);
+        assert_eq!(full["tip_hash"], height["tip_hash"]);
+    }
+
+    #[actix_web::test]
+    async fn chain_headers_pagination_and_bad_from() {
+        let app = test_app!();
+        let req = test::TestRequest::get()
+            .uri("/chain/headers?limit=1")
+            .to_request();
+        let body = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(body.as_array().unwrap().len(), 1);
+
+        let req = test::TestRequest::get().uri("/chain/headers").to_request();
+        let body = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(body.as_array().unwrap().len(), 2);
+
+        let req = test::TestRequest::get()
+            .uri("/chain/headers?from=zz")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 400);
+    }
+
+    #[actix_web::test]
+    async fn chain_block_lookup_and_not_found() {
+        let app = test_app!();
+        let req = test::TestRequest::get().uri("/chain/height").to_request();
+        let height = json_body(test::call_service(&app, req).await).await;
+        let tip = height["tip_hash"].as_str().unwrap().to_string();
+
+        let req = test::TestRequest::get()
+            .uri(&format!("/chain/block/{tip}"))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+
+        let req = test::TestRequest::get()
+            .uri(&format!("/chain/block/{}", "00".repeat(32)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 404);
+
+        let req = test::TestRequest::get()
+            .uri("/chain/block/zz")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 400);
+    }
+
+    #[actix_web::test]
+    async fn submit_block_duplicate_reject_and_foreign() {
+        let app = test_app!();
+        // Current tip DTO round-trips through the wire format.
+        let req = test::TestRequest::get().uri("/chain").to_request();
+        let full = json_body(test::call_service(&app, req).await).await;
+        let blocks = full["blocks"].as_array().unwrap().clone();
+        let tip_dto = blocks.last().unwrap().clone();
+
+        // Re-pushing our own tip is a harmless duplicate.
+        let resp = post_json(&app, "/chain/block", &tip_dto).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(json_body(resp).await["status"], "duplicate");
+
+        // Tampered DTO fails the hash check.
+        let mut tampered = tip_dto.clone();
+        tampered["nonce"] = serde_json::json!(tip_dto["nonce"].as_i64().unwrap() + 1);
+        let resp = post_json(&app, "/chain/block", &tampered).await;
+        assert_eq!(resp.status().as_u16(), 400);
+
+        // Genesis does not extend the tip: 409, pull loop owns catch-up.
+        let resp = post_json(&app, "/chain/block", &blocks[0]).await;
+        assert_eq!(resp.status().as_u16(), 409);
+    }
+
+    #[actix_web::test]
+    async fn pending_roundtrip_and_bad_hex() {
+        let app = test_app!();
+        let req = test::TestRequest::get().uri("/chain/pending").to_request();
+        let body = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(body["pending"].as_array().unwrap().len(), 0);
+
+        post_json(
+            &app,
+            "/faucet",
+            &serde_json::json!({"recipient_address": "alice", "amount": "5"}),
+        )
+        .await;
+        let req = test::TestRequest::get().uri("/chain/pending").to_request();
+        let body = json_body(test::call_service(&app, req).await).await;
+        assert_eq!(body["pending"].as_array().unwrap().len(), 1);
+
+        // Re-pushing our own entry merges nothing but stays 200.
+        let resp = post_json(&app, "/chain/pending", &body).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(json_body(resp).await["added"], 0);
+
+        let resp = post_json(
+            &app,
+            "/chain/pending",
+            &serde_json::json!({"pending": ["zz"]}),
+        )
+        .await;
+        assert_eq!(resp.status().as_u16(), 400);
+    }
+
+    #[actix_web::test]
+    async fn peers_without_membership_is_empty() {
+        let app = test_app!();
+        let req = test::TestRequest::get().uri("/peers").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(json_body(resp).await["peers"], serde_json::json!([]));
+    }
+
+    #[actix_web::test]
+    async fn index_and_wallet_page_serve() {
+        let app = test_app!();
+        let req = test::TestRequest::get().uri("/").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        let body = json_body(resp).await;
+        assert_eq!(body.as_array().unwrap().len(), 2);
+
+        let req = test::TestRequest::get().uri("/wallet").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        assert!(
+            resp.headers()
+                .get("content-type")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("text/html")
+        );
+    }
+}

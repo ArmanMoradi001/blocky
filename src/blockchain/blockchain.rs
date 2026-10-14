@@ -645,3 +645,370 @@ impl BlockChain {
             .find(|(_, b)| b.hash() == hash)
     }
 }
+
+// -- tests -----------------------------------------------------------------
+// T1.1 chain validation, T1.2 mempool merge, T1.4 sync fork-choice.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wallet::wallet::Wallet;
+
+    fn miner_chain() -> BlockChain {
+        BlockChain::new("miner-addr".to_string())
+    }
+
+    fn raw_tx(sender: &str, recipient: &str, value: u64) -> Vec<u8> {
+        Transaction::new(
+            sender.as_bytes().to_vec(),
+            recipient.as_bytes().to_vec(),
+            value,
+        )
+        .serialization()
+    }
+
+    /// Stuff raw txs straight into the pool (bypasses entry checks) and mine
+    /// them into a block. Lets tests craft overspending / zero-value /
+    /// self-transfer chains that `add_transaction` would refuse.
+    fn mine_with(bc: &mut BlockChain, txs: Vec<Vec<u8>>) {
+        bc.transactions_pool = txs;
+        let tip = bc.last_block().hash();
+        bc.create_block(0, tip);
+    }
+
+    /// A block with correct linkage/timestamps but no proof-of-work.
+    fn unmined_block(prev: &Block) -> Block {
+        let mut nonce = 0i32;
+        loop {
+            let b = Block::from_parts(nonce, prev.hash(), prev.timestamp(), vec![]);
+            if !BlockChain::hash_meets_difficulty(&b.hash()) {
+                return b;
+            }
+            nonce += 1;
+        }
+    }
+
+    /// Fresh chain where `addr` owns exactly 100 confirmed coins.
+    fn funded(addr: &str) -> BlockChain {
+        let mut bc = miner_chain();
+        bc.faucet(addr.to_string(), 100).unwrap();
+        bc.mining();
+        bc
+    }
+
+    // -- T1.1: chain validation ------------------------------------------
+
+    #[test]
+    fn fresh_chain_is_valid() {
+        let bc = miner_chain();
+        assert_eq!(bc.height(), 2); // genesis + first miner reward
+        assert!(BlockChain::validate_chain(bc.get_chain()).is_ok());
+        assert_eq!(bc.calculate_total_amount("miner-addr".to_string()), 1);
+    }
+
+    #[test]
+    fn faucet_then_mine_confirms_and_validates() {
+        let bc = funded("alice");
+        assert_eq!(bc.calculate_total_amount("alice".to_string()), 100);
+        assert!(BlockChain::validate_chain(bc.get_chain()).is_ok());
+    }
+
+    #[test]
+    fn mempool_entry_rejects_forged_signature() {
+        let w = Wallet::new();
+        let mut bc = miner_chain();
+        bc.faucet(w.address_str(), 50).unwrap();
+        bc.mining();
+        // Sign, then tamper: the signature no longer matches the payload.
+        let mut wt = w.sign_transaction(&"bob".to_string(), 10);
+        wt.amount = 1000;
+        let err = bc.add_transaction(&wt).unwrap_err();
+        assert!(err.contains("signature"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn mempool_entry_rejects_overspend() {
+        let w = Wallet::new();
+        let mut bc = miner_chain();
+        bc.faucet(w.address_str(), 10).unwrap();
+        bc.mining();
+        let wt = w.sign_transaction(&"bob".to_string(), 11);
+        let err = bc.add_transaction(&wt).unwrap_err();
+        assert!(err.contains("insufficient"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn chain_rejects_overspend() {
+        let mut bc = funded("alice"); // alice owns 100
+        mine_with(&mut bc, vec![raw_tx("alice", "bob", 1000)]);
+        let err = BlockChain::validate_chain(bc.get_chain()).unwrap_err();
+        assert!(err.contains("overspend"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn chain_rejects_double_spend() {
+        let mut bc = funded("alice"); // alice owns 100
+        mine_with(
+            &mut bc,
+            vec![raw_tx("alice", "bob", 60), raw_tx("alice", "carol", 60)],
+        );
+        let err = BlockChain::validate_chain(bc.get_chain()).unwrap_err();
+        assert!(err.contains("overspend"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn chain_rejects_zero_value() {
+        let mut bc = funded("alice");
+        mine_with(&mut bc, vec![raw_tx("alice", "bob", 0)]);
+        let err = BlockChain::validate_chain(bc.get_chain()).unwrap_err();
+        assert!(err.contains("zero-value"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn chain_rejects_self_transfer() {
+        let mut bc = funded("alice");
+        mine_with(&mut bc, vec![raw_tx("alice", "alice", 5)]);
+        let err = BlockChain::validate_chain(bc.get_chain()).unwrap_err();
+        assert!(err.contains("self-transfer"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn block_rejects_bad_proof_of_work() {
+        let bc = miner_chain();
+        let tip = bc.last_block().clone();
+        let bad = unmined_block(&tip);
+        let err = BlockChain::validate_block(&bad, &tip).unwrap_err();
+        assert!(err.contains("proof-of-work"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn block_rejects_bad_previous_hash() {
+        let bc = miner_chain();
+        let tip = bc.last_block().clone();
+        let bad = Block::from_parts(0, vec![9u8; 32], tip.timestamp(), vec![]);
+        let err = BlockChain::validate_block(&bad, &tip).unwrap_err();
+        assert!(err.contains("previous_hash"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn block_rejects_future_timestamp() {
+        let bc = miner_chain();
+        let tip = bc.last_block().clone();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let bad = Block::from_parts(0, tip.hash(), now + 3_600_000_000_000, vec![]);
+        let err = BlockChain::validate_block(&bad, &tip).unwrap_err();
+        assert!(err.contains("future"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn block_rejects_older_timestamp() {
+        let bc = funded("alice");
+        let tip = bc.last_block().clone();
+        let bad = Block::from_parts(
+            0,
+            tip.hash(),
+            tip.timestamp().saturating_sub(1),
+            vec![],
+        );
+        // Either the timestamp check fires, or (if tip ts is 0) PoW fails —
+        // both are rejections of a backdated block.
+        assert!(BlockChain::validate_block(&bad, &tip).is_err());
+    }
+
+    #[test]
+    fn chain_rejects_genesis_mismatch() {
+        let err =
+            BlockChain::validate_chain(&[Block::new(0, vec![0u8; 32])]).unwrap_err();
+        assert!(err.contains("genesis"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn chain_rejects_empty() {
+        let err = BlockChain::validate_chain(&[]).unwrap_err();
+        assert!(err.contains("empty"), "unexpected: {err}");
+    }
+
+    // Desired behavior once the S4 overflow fix lands (`u64` checked
+    // arithmetic in balance checks): a `u64::MAX` spend must be rejected even
+    // though it is correctly signed. Today it wraps to a negative `i64` and
+    // bypasses the check, so this stays ignored until the fix.
+    #[test]
+    #[ignore = "S4: u64::MAX wraps to negative i64 and bypasses the balance check"]
+    fn mempool_entry_rejects_huge_amount() {
+        let w = Wallet::new();
+        let mut bc = miner_chain();
+        bc.faucet(w.address_str(), 10).unwrap();
+        bc.mining();
+        let wt = w.sign_transaction(&"bob".to_string(), u64::MAX);
+        assert!(bc.add_transaction(&wt).is_err());
+    }
+
+    // -- T1.2: mempool merge ---------------------------------------------
+
+    #[test]
+    fn merge_skips_already_confirmed() {
+        let mut bc = funded("alice");
+        assert_eq!(bc.pending_count(), 0);
+        let confirmed = bc.get_chain()[2].raw_transactions()[0].clone();
+        assert_eq!(bc.merge_pending_raw(vec![confirmed]), 0);
+        assert_eq!(bc.pending_count(), 0);
+    }
+
+    #[test]
+    fn merge_skips_pool_duplicates() {
+        let mut bc = miner_chain();
+        let raw = raw_tx(BlockChain::MINING_SENDER, "alice", 25);
+        assert_eq!(bc.merge_pending_raw(vec![raw.clone()]), 1);
+        assert_eq!(bc.merge_pending_raw(vec![raw]), 0);
+        assert_eq!(bc.pending_count(), 1);
+    }
+
+    #[test]
+    fn merge_skips_malformed() {
+        let mut bc = miner_chain();
+        let garbage = vec![vec![0u8; 3], b"not-a-tx".to_vec(), vec![255u8; 8]];
+        assert_eq!(bc.merge_pending_raw(garbage), 0);
+        assert_eq!(bc.pending_count(), 0);
+    }
+
+    #[test]
+    fn merge_skips_zero_value_and_self_transfer() {
+        let mut bc = miner_chain();
+        assert_eq!(
+            bc.merge_pending_raw(vec![raw_tx("a", "b", 0), raw_tx("a", "a", 5)]),
+            0
+        );
+        assert_eq!(bc.pending_count(), 0);
+    }
+
+    #[test]
+    fn merge_skips_overspend_but_accepts_affordable() {
+        let mut bc = funded("alice"); // alice owns 100
+        assert_eq!(bc.merge_pending_raw(vec![raw_tx("alice", "bob", 101)]), 0);
+        assert_eq!(bc.merge_pending_raw(vec![raw_tx("alice", "bob", 100)]), 1);
+        assert_eq!(bc.pending_count(), 1);
+    }
+
+    #[test]
+    fn merge_accepts_spendable_peer_tx() {
+        // A wallet-signed spend, funded on both chains (as gossip would see).
+        let w = Wallet::new();
+        let mut a = miner_chain();
+        a.faucet(w.address_str(), 50).unwrap();
+        a.mining();
+        let wt = w.sign_transaction(&"recipient-x".to_string(), 20);
+        let raw = Transaction::new(
+            wt.sender.into_bytes(),
+            wt.recipeint.into_bytes(),
+            wt.amount,
+        )
+        .serialization();
+
+        let mut b = miner_chain();
+        b.faucet(w.address_str(), 50).unwrap();
+        b.mining();
+        assert_eq!(b.merge_pending_raw(vec![raw]), 1);
+    }
+
+    #[test]
+    fn replace_drops_confirmed_pool_but_keeps_unconfirmed() {
+        let mut a = funded("alice"); // h3, alice owns 100
+        let spend = raw_tx("alice", "bob", 30);
+        a.transactions_pool.push(spend.clone());
+        assert_eq!(a.pending_count(), 1);
+
+        // Peer chain confirming the spend: adopt, pool entry must go.
+        let mut confirming = BlockChain::new("miner-addr".to_string());
+        confirming.chain = a.get_chain().clone();
+        confirming.transactions_pool = vec![spend.clone()];
+        confirming.create_block(0, confirming.last_block().hash());
+        assert!(a
+            .replace_chain_if_longer_valid(confirming.get_chain().clone())
+            .unwrap());
+        assert_eq!(a.height(), 4);
+        assert_eq!(a.pending_count(), 0, "confirmed tx must leave the pool");
+        assert!(BlockChain::validate_chain(a.get_chain()).is_ok());
+
+        // Peer chain not containing the spend: adopt, pool entry must stay.
+        let mut a = funded("alice");
+        a.transactions_pool.push(spend);
+        let mut longer = BlockChain::new("miner-addr".to_string());
+        longer.chain = a.get_chain().clone();
+        longer.create_block(0, longer.last_block().hash()); // empty block
+        assert!(a
+            .replace_chain_if_longer_valid(longer.get_chain().clone())
+            .unwrap());
+        assert_eq!(a.pending_count(), 1, "unconfirmed tx must survive reorg");
+    }
+
+    // -- T1.4: sync fork-choice ------------------------------------------
+
+    #[test]
+    fn fork_choice_adopts_taller_valid_chain() {
+        let mut a = miner_chain();
+        let mut b = miner_chain();
+        b.mining();
+        b.mining(); // height 4
+        let tip = b.tip_hash();
+        assert!(a
+            .replace_chain_if_longer_valid(b.get_chain().clone())
+            .unwrap());
+        assert_eq!(a.height(), 4);
+        assert_eq!(a.tip_hash(), tip);
+    }
+
+    #[test]
+    fn fork_choice_rejects_taller_invalid_chain() {
+        let mut b = funded("alice");
+        mine_with(&mut b, vec![raw_tx("alice", "bob", 10_000)]); // overspends
+        let mut a = miner_chain();
+        let (height, tip) = (a.height(), a.tip_hash());
+        let err = a
+            .replace_chain_if_longer_valid(b.get_chain().clone())
+            .unwrap_err();
+        assert!(err.contains("overspend"), "unexpected: {err}");
+        assert_eq!(a.height(), height, "local chain must be untouched");
+        assert_eq!(a.tip_hash(), tip, "local tip must be untouched");
+    }
+
+    #[test]
+    fn fork_choice_keeps_local_on_equal_height() {
+        let mut a = BlockChain::new("miner-a".to_string());
+        let b = BlockChain::new("miner-b".to_string());
+        assert_eq!(a.height(), b.height());
+        let tip = a.tip_hash();
+        assert_eq!(
+            a.replace_chain_if_longer_valid(b.get_chain().clone()),
+            Ok(false)
+        );
+        assert_eq!(a.tip_hash(), tip);
+    }
+
+    #[test]
+    fn fork_choice_rejects_shorter_chain() {
+        let mut b = miner_chain();
+        b.mining(); // height 3
+        let mut a = BlockChain::new("miner-a".to_string());
+        a.chain = b.get_chain().clone();
+        a.mining(); // height 4
+        assert_eq!(
+            a.replace_chain_if_longer_valid(b.get_chain().clone()),
+            Ok(false)
+        );
+        assert_eq!(a.height(), 4);
+    }
+
+    #[test]
+    fn fork_choice_rejects_foreign_genesis() {
+        let mut b = miner_chain();
+        b.mining();
+        b.mining(); // height 4
+        let mut candidate = b.get_chain().clone();
+        candidate[0] = Block::from_parts(99, vec![0u8; 32], 0, vec![]);
+        let mut a = miner_chain();
+        let err = a.replace_chain_if_longer_valid(candidate).unwrap_err();
+        assert!(err.contains("genesis"), "unexpected: {err}");
+    }
+}

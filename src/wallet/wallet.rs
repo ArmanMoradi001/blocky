@@ -214,3 +214,103 @@ impl Wallet {
         }
     }
 }
+
+// -- tests -----------------------------------------------------------------
+// T1.5: wallet signing / verification + key reconstruction.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sign_verify_round_trip() {
+        let w = Wallet::new();
+        for amount in [1u64, 20, 1_000_000] {
+            let tx = w.sign_transaction(&"recipient-addr".to_string(), amount);
+            assert!(Wallet::verify_transaction(&tx));
+        }
+    }
+
+    #[test]
+    fn verify_rejects_tampered_fields() {
+        let w = Wallet::new();
+        let base = w.sign_transaction(&"recipient-addr".to_string(), 25);
+
+        let mut t = base.clone();
+        t.amount = 26;
+        assert!(!Wallet::verify_transaction(&t), "tampered amount must fail");
+
+        let mut t = base.clone();
+        t.recipeint = "someone-else".to_string();
+        assert!(
+            !Wallet::verify_transaction(&t),
+            "tampered recipient must fail"
+        );
+
+        let mut t = base.clone();
+        t.sender = Wallet::new().address_str();
+        assert!(!Wallet::verify_transaction(&t), "swapped sender must fail");
+    }
+
+    #[test]
+    fn verify_rejects_swapped_public_key() {
+        // Attacker replaces the victim's key with their own: the derived
+        // address no longer matches the claimed sender.
+        let victim = Wallet::new();
+        let attacker = Wallet::new();
+        let mut tx = victim.sign_transaction(&"recipient-addr".to_string(), 5);
+        tx.public_key = attacker.public_key_str();
+        assert!(!Wallet::verify_transaction(&tx));
+    }
+
+    #[test]
+    fn verify_rejects_malformed_signature_and_pubkey() {
+        let w = Wallet::new();
+        let base = w.sign_transaction(&"recipient-addr".to_string(), 5);
+
+        for bad_sig in ["", "zz", "abcd", &"00".repeat(64)] {
+            let mut t = base.clone();
+            t.signature = bad_sig.to_string();
+            assert!(
+                !Wallet::verify_transaction(&t),
+                "signature {bad_sig:?} must fail"
+            );
+        }
+        for bad_pk in ["", "zz", &"00".repeat(32)] {
+            let mut t = base.clone();
+            t.public_key = bad_pk.to_string();
+            assert!(
+                !Wallet::verify_transaction(&t),
+                "public key {bad_pk:?} must fail"
+            );
+        }
+    }
+
+    #[test]
+    fn try_new_from_round_trip_and_mismatch() {
+        let w = Wallet::new();
+        let d = w.get_wallet_data();
+        assert!(Wallet::try_new_from(&d.public_key, &d.private_key, &d.blockchain_address).is_ok());
+
+        let other = Wallet::new().get_wallet_data();
+        // Another wallet's public key with this wallet's private key.
+        assert!(Wallet::try_new_from(
+            &other.public_key,
+            &d.private_key,
+            &d.blockchain_address
+        )
+        .is_err());
+        // Right keys, another wallet's address.
+        assert!(Wallet::try_new_from(
+            &d.public_key,
+            &d.private_key,
+            &other.blockchain_address
+        )
+        .is_err());
+        // Garbage hex.
+        assert!(Wallet::try_new_from("zz", &d.private_key, &d.blockchain_address).is_err());
+        assert!(Wallet::try_new_from(&d.public_key, "zz", &d.blockchain_address).is_err());
+        // Valid but mismatched key pair.
+        assert!(Wallet::try_new_from(&d.public_key, &other.private_key, &d.blockchain_address)
+            .is_err());
+    }
+}

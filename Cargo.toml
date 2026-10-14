@@ -17,3 +17,6 @@ env_logger = "0.11.11"
 log = "0.4.34"
 actix-web = "4.15.0"
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util"] }
+
+[dev-dependencies]
+actix-http = "3.18"
