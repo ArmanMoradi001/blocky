@@ -77,7 +77,8 @@ RUST_LOG=info cargo run
 
 Open `http://127.0.0.1:5000/wallet` and follow the steps on the page:
 
-1. A wallet is generated for the page load.
+1. A wallet is generated in your browser for the page load (the private
+   key never leaves the page — transfers are signed locally with WebCrypto).
 2. Get test coins from the faucet.
 3. Mine a block to confirm.
 4. Send coins, then mine again to confirm.
@@ -135,15 +136,21 @@ curl http://127.0.0.1:5000/mining
 
 ### Send
 
+`POST /transaction` takes a **client-signed** transfer — the server never
+sees private keys. The dashboard signs in the browser; from `curl`, sign
+the canonical payload
+`{"sender":…,"recipeint":…,"amount":N,"public_key":…,"signature":""}`
+with your P-256 key (see `static/wallet.js: canonicalPayload`) and post:
+
 ```bash
 curl -X POST http://127.0.0.1:5000/transaction \
   -H 'Content-Type: application/json' \
   -d '{
-    "private_key": "<HEX>",
     "public_key": "<HEX>",
     "blockchain_address": "<SENDER>",
     "recipient_address": "<RECIPIENT>",
-    "amount": "10"
+    "amount": "10",
+    "signature": "<HEX>"
   }'
 ```
 
@@ -167,6 +174,15 @@ curl http://127.0.0.1:5000/peers
 `POST /chain/block` only fast-paths a block that directly extends the tip;
 anything else returns `409` and the 2s background pull loop fetches the full
 longest valid chain instead.
+
+## Security notes
+
+- Transfers are signed in the browser; `POST /transaction` never accepts a
+  private key and the server logs routing metadata only (never key material).
+- `GET /get_wallet` still dispenses a full keypair over HTTP — a local-dev
+  convenience for `curl` testing. Do not expose it beyond loopback, and put
+  any non-local deployment behind a TLS-terminating reverse proxy (peer sync
+  and all APIs are plain HTTP).
 
 ## Tech stack
 

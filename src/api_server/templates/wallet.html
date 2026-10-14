@@ -39,19 +39,16 @@
       <section class="card">
         <span class="pill-step">Step 1 · Identity</span>
         <h2>Wallet details</h2>
-        <p class="sub">Auto-generated on page load. Keep your private key secret.</p>
+        <p class="sub">Generated in your browser on page load. The private key never leaves this page — it is not shown, logged, or sent to the server.</p>
         <div class="field">
           <label for="public_key">Public Key</label>
           <textarea id="public_key" rows="3" readonly placeholder="Loading…"></textarea>
         </div>
         <div class="field">
-          <label for="private_key">Private Key</label>
-          <textarea id="private_key" rows="2" readonly placeholder="Loading…"></textarea>
-        </div>
-        <div class="field">
           <label for="blockchain_address">Blockchain Address</label>
           <textarea id="blockchain_address" rows="2" readonly placeholder="Loading…"></textarea>
         </div>
+        <button id="new_wallet" class="btn secondary">Generate new wallet</button>
       </section>
 
       <div style="display:grid;gap:18px;align-content:start">

@@ -19,7 +19,7 @@ use crate::blockchain::blockchain::{Block, BlockChain, Serialization};
 use crate::blockchain::transaction::Transaction as BlockchainTransaction;
 use crate::network::membership::{MemberStatus, Membership};
 use crate::network::sync;
-use crate::wallet::wallet::Wallet;
+use crate::wallet::wallet::{Transaction as WalletTransaction, Wallet};
 
 use super::models::{
     BlockDto, BlockHeaderDto, BlockView, ChainHeightResponse, ChainResponse, FaucetRequest,
@@ -235,7 +235,6 @@ impl ApiServer {
         transaction: web::Json<TransactionRequest>,
     ) -> HttpResponse {
         let tx = transaction.into_inner();
-        debug!("receive json info: {:?}", tx);
 
         let sender = tx.blockchain_address.trim().to_string();
         let recipient = tx.recipient_address.trim().to_string();
@@ -253,17 +252,17 @@ impl ApiServer {
             return HttpResponse::BadRequest().json("amount must be greater than 0");
         }
 
-        // Rebuild the sender wallet from the supplied keys. Never panics:
-        // mismatched/corrupt keys become a 400.
-        let wallet = match Wallet::try_new_from(
-            tx.public_key.trim(),
-            tx.private_key.trim(),
-            &sender,
-        ) {
-            Ok(w) => w,
-            Err(e) => return HttpResponse::BadRequest().json(e),
+        // The client signed this transfer locally (browser WebCrypto); the
+        // server only verifies. No private key ever reaches us — log routing
+        // metadata only, never key material.
+        debug!("queue tx {sender} -> {recipient} : {amount}");
+        let wallet_tx = WalletTransaction {
+            sender: sender.clone(),
+            recipeint: recipient.clone(),
+            amount,
+            public_key: tx.public_key.trim().to_string(),
+            signature: tx.signature.trim().to_string(),
         };
-        let wallet_tx = wallet.sign_transaction(&recipient, amount);
 
         let api_server = data.get_ref();
         let mut unlock_cache = api_server.cache.lock().unwrap();
@@ -596,15 +595,17 @@ mod tests {
         test::call_service(app, req).await
     }
 
-    async fn new_wallet(
-        app: &impl actix_web::dev::Service<
-            actix_http::Request,
-            Response = actix_web::dev::ServiceResponse,
-            Error = actix_web::Error,
-        >,
-    ) -> serde_json::Value {
-        let req = test::TestRequest::get().uri("/get_wallet").to_request();
-        json_body(test::call_service(app, req).await).await
+    // Build a /transaction body the way the browser does: signed locally,
+    // no private key on the wire.
+    fn signed_tx_payload(w: &Wallet, recipient: &str, amount: u64) -> serde_json::Value {
+        let wt = w.sign_transaction(&recipient.to_string(), amount);
+        serde_json::json!({
+            "public_key": wt.public_key,
+            "blockchain_address": wt.sender,
+            "recipient_address": wt.recipeint,
+            "amount": wt.amount.to_string(),
+            "signature": wt.signature,
+        })
     }
 
     #[actix_web::test]
@@ -674,17 +675,8 @@ mod tests {
     #[actix_web::test]
     async fn transaction_rejects_bad_input() {
         let app = test_app!();
-        let wallet = new_wallet(&app).await;
-        let addr = wallet["blockchain_address"].as_str().unwrap().to_string();
-        let payload = |sender: &str, recipient: &str, amount: &str| {
-            serde_json::json!({
-                "private_key": wallet["private_key"],
-                "public_key": wallet["public_key"],
-                "blockchain_address": sender,
-                "recipient_address": recipient,
-                "amount": amount,
-            })
-        };
+        let w = Wallet::new();
+        let addr = w.address_str();
         for (sender, recipient, amount) in [
             ("", "bob", "10"),          // empty sender
             (addr.as_str(), "", "10"),  // empty recipient
@@ -692,27 +684,36 @@ mod tests {
             (addr.as_str(), "bob", "0"),
             (addr.as_str(), "bob", "abc"),
         ] {
-            let resp = post_json(&app, "/transaction", &payload(sender, recipient, amount)).await;
+            let mut payload = signed_tx_payload(&w, recipient, 10);
+            payload["blockchain_address"] = serde_json::json!(sender);
+            payload["recipient_address"] = serde_json::json!(recipient);
+            payload["amount"] = serde_json::json!(amount);
+            let resp = post_json(&app, "/transaction", &payload).await;
             assert_eq!(
                 resp.status().as_u16(),
                 400,
                 "transaction {sender:?}/{recipient:?}/{amount:?} must be 400"
             );
         }
-        // Corrupt keys must not panic: they become a 400.
-        let mut bad_keys = payload(addr.as_str(), "bob", "10");
-        bad_keys["private_key"] = serde_json::json!("zz");
-        let resp = post_json(&app, "/transaction", &bad_keys).await;
+        // Tampered amount breaks the client signature.
+        let mut tampered = signed_tx_payload(&w, "bob", 10);
+        tampered["amount"] = serde_json::json!("11");
+        let resp = post_json(&app, "/transaction", &tampered).await;
+        assert_eq!(resp.status().as_u16(), 400);
+        // Garbage public key must not panic: it becomes a 400.
+        let mut bad_key = signed_tx_payload(&w, "bob", 10);
+        bad_key["public_key"] = serde_json::json!("zz");
+        let resp = post_json(&app, "/transaction", &bad_key).await;
         assert_eq!(resp.status().as_u16(), 400);
     }
 
     #[actix_web::test]
     async fn transaction_full_flow_confirms_after_mine() {
         let app = test_app!();
-        let sender = new_wallet(&app).await;
-        let recipient = new_wallet(&app).await;
-        let s_addr = sender["blockchain_address"].as_str().unwrap().to_string();
-        let r_addr = recipient["blockchain_address"].as_str().unwrap().to_string();
+        let sender = Wallet::new();
+        let recipient = Wallet::new();
+        let s_addr = sender.address_str();
+        let r_addr = recipient.address_str();
 
         post_json(
             &app,
@@ -723,18 +724,7 @@ mod tests {
         let req = test::TestRequest::post().uri("/mining").to_request();
         assert_eq!(test::call_service(&app, req).await.status().as_u16(), 200);
 
-        let resp = post_json(
-            &app,
-            "/transaction",
-            &serde_json::json!({
-                "private_key": sender["private_key"],
-                "public_key": sender["public_key"],
-                "blockchain_address": s_addr,
-                "recipient_address": r_addr,
-                "amount": "20",
-            }),
-        )
-        .await;
+        let resp = post_json(&app, "/transaction", &signed_tx_payload(&sender, &r_addr, 20)).await;
         assert_eq!(resp.status().as_u16(), 201);
 
         // Queued but unconfirmed.
@@ -761,8 +751,8 @@ mod tests {
     #[actix_web::test]
     async fn transaction_rejects_insufficient_funds() {
         let app = test_app!();
-        let sender = new_wallet(&app).await;
-        let s_addr = sender["blockchain_address"].as_str().unwrap().to_string();
+        let sender = Wallet::new();
+        let s_addr = sender.address_str();
         post_json(
             &app,
             "/faucet",
@@ -772,18 +762,7 @@ mod tests {
         let req = test::TestRequest::post().uri("/mining").to_request();
         test::call_service(&app, req).await;
 
-        let resp = post_json(
-            &app,
-            "/transaction",
-            &serde_json::json!({
-                "private_key": sender["private_key"],
-                "public_key": sender["public_key"],
-                "blockchain_address": s_addr,
-                "recipient_address": "bob",
-                "amount": "999",
-            }),
-        )
-        .await;
+        let resp = post_json(&app, "/transaction", &signed_tx_payload(&sender, "bob", 999)).await;
         assert_eq!(resp.status().as_u16(), 422);
     }
 

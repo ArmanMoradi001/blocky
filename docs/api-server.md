@@ -39,13 +39,16 @@ are decoded to strings there so the web UI never sees raw bytes.
 
 ## How a transfer works
 
-1. Client posts keys + sender + recipient + amount (amount arrives as a
-   string and is parsed to `u64`).
+1. Client signs locally (browser WebCrypto P-256 over the canonical JSON
+   payload — see `static/wallet.js: canonicalPayload`) and posts
+   `{ public_key, blockchain_address, recipient_address, amount, signature }`
+   (amount arrives as a string and is parsed to `u64`). Private keys are
+   never sent: the server only verifies.
 2. Handler rejects empty fields, `sender == recipient`, and non-positive
-   amounts (`400`); rebuilds the wallet via `try_new_from` (key mismatch →
-   `400`); signs and calls `BlockChain::add_transaction`.
-3. Chain checks signature and confirmed-minus-queued balance; insufficient
-   funds → `422`, other problems → `400`.
+   amounts (`400`); `BlockChain::add_transaction` verifies the signature
+   (`400` on mismatch).
+3. Chain checks confirmed-minus-queued balance; insufficient funds → `422`,
+   other problems → `400`.
 4. Success → `201` with `{ status: "pending", …, note: "call GET /mining…" }`.
    The transaction is **queued, not confirmed** — mining seals it.
 
@@ -59,9 +62,10 @@ routes or runtime file I/O exist:
 - `static/wallet.css` — dark-theme styling
 - `static/wallet.js` — jQuery calls to the endpoints above (unchanged API)
 
-Element IDs (`public_key`, `private_key`, `blockchain_address`,
+Element IDs (`public_key`, `blockchain_address`,
 `input_amount`, `status`, …) are the contract between HTML and JS — renaming
-either side breaks the page.
+either side breaks the page. The private key lives only in WebCrypto memory:
+it is never rendered into the DOM, logged, or posted.
 
 ## Limitations
 
@@ -72,7 +76,9 @@ either side breaks the page.
   `GET/POST /mining` handler (and at startup), stalling that worker.
 - **Side effects on GET.** `/mining` mutates state over GET, against HTTP
   semantics (kept for dashboard convenience).
-- **Plaintext keys.** Private keys travel in JSON bodies and sit in page DOM;
-  acceptable for local testing, never for production.
+- **Plaintext HTTP.** All APIs and peer sync are unencrypted; `GET
+  /get_wallet` dispenses full keypairs. Acceptable for local testing, never
+  for production — terminate TLS at a reverse proxy and block `/get_wallet`
+  beyond loopback.
 - **Coarse concurrency.** One big `Mutex` around the whole chain; no
   per-resource locking.

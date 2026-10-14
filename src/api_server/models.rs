@@ -12,17 +12,20 @@ pub struct QueryAmount {
     pub amount: i64,
 }
 
-#[derive(Deserialize, Debug)]
+// POST /transaction — a client-signed transfer.
+//
+// The server NEVER receives private keys: signing happens in the browser
+// (see static/wallet.js, which posts only the public key + signature and
+// the node verifies). `Debug` is deliberately not derived so key material
+// cannot end up in logs by accident.
+#[derive(Deserialize)]
 pub struct TransactionRequest {
-    pub private_key: String,
     pub public_key: String,
     pub blockchain_address: String,
     pub recipient_address: String,
     pub amount: String,
+    pub signature: String,
 }
-
-// Keep old name as alias so existing clients keep working.
-pub type Transaction = TransactionRequest;
 
 #[derive(Deserialize, Debug)]
 pub struct FaucetRequest {
