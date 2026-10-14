@@ -334,6 +334,13 @@ impl BlockChain {
             sender_address: tx.sender.as_bytes().to_vec(),
             reciever_address: tx.recipeint.clone().into_bytes(),
             value: tx.amount,
+            // The signature + key travel with the transaction from here on:
+            // every validation path re-verifies them, so a peer cannot forge
+            // spends from an address it does not own (mints carry neither).
+            public_key: hex::decode(tx.public_key.trim())
+                .map_err(|_| "bad public_key hex".to_string())?,
+            signature: hex::decode(tx.signature.trim())
+                .map_err(|_| "bad signature hex".to_string())?,
         };
 
         // NOTE: no duplicate rejection here. The on-chain Transaction drops
@@ -470,6 +477,36 @@ impl BlockChain {
             .unwrap_or(0)
     }
 
+    /// Verify an on-chain transaction's signature. Mints from
+    /// `MINING_SENDER` create funds and carry no signature; everything else
+    /// must present a valid 64-byte key + 64-byte signature over the exact
+    /// spend. This is what stops a peer forging spends from an address it
+    /// does not own — call it on every path that accepts blocks or mempool
+    /// entries.
+    fn verify_onchain_tx(tx: &Transaction) -> Result<(), String> {
+        if tx.sender_address == Self::MINING_SENDER.as_bytes().to_vec() {
+            return Ok(());
+        }
+        if tx.public_key.len() != 64 || tx.signature.len() != 64 {
+            return Err("missing transaction signature".to_string());
+        }
+        let sender = String::from_utf8(tx.sender_address.clone())
+            .map_err(|_| "sender address is not valid UTF-8".to_string())?;
+        let recipeint = String::from_utf8(tx.reciever_address.clone())
+            .map_err(|_| "recipient address is not valid UTF-8".to_string())?;
+        let wt = WalletTransaction {
+            sender,
+            recipeint,
+            amount: tx.value,
+            public_key: hex::encode(&tx.public_key),
+            signature: hex::encode(&tx.signature),
+        };
+        if !Wallet::verify_transaction(&wt) {
+            return Err("transaction signature verification failed".to_string());
+        }
+        Ok(())
+    }
+
     /// Validate a single block against its predecessor.
     pub fn validate_block(block: &Block, prev: &Block) -> Result<(), String> {
         if block.previous_hash != prev.hash() {
@@ -489,6 +526,12 @@ impl BlockChain {
             if Transaction::try_deserialization(raw).is_none() {
                 return Err("malformed transaction in block".to_string());
             }
+        }
+        for raw in block.transactions.iter() {
+            // Safe to unwrap: checked well-formed just above.
+            let tx = Transaction::try_deserialization(raw)
+                .ok_or_else(|| "malformed transaction in block".to_string())?;
+            Self::verify_onchain_tx(&tx)?;
         }
         Ok(())
     }
@@ -519,6 +562,9 @@ impl BlockChain {
                 if tx.sender_address == tx.reciever_address {
                     return Err("self-transfer".to_string());
                 }
+                // Re-verify the persisted signature: blocks learned from
+                // peers must prove every spend, not just a valid hash.
+                Self::verify_onchain_tx(&tx)?;
                 if tx.sender_address == mint_id {
                     let e = balances.entry(tx.reciever_address.clone()).or_insert(0);
                     *e += tx.value as i64;
@@ -600,12 +646,12 @@ impl BlockChain {
     }
 
     /// Merge mempool entries learned from a peer. Entries are raw on-chain
-    /// txs (signatures already checked at the entry node); we check structure
-    /// + spendability against our current chain. Entries already confirmed in
-    /// our local chain are skipped — without this, the background pull
-    /// re-imports txs from lagging peers that haven't adopted our latest
-    /// block yet, and they get mined a second time (double mint/spend).
-    /// Returns newly added count.
+    /// txs; we check structure, signatures, and spendability against our
+    /// current chain — a peer is never trusted on its word. Entries already
+    /// confirmed in our local chain are skipped — without this, the
+    /// background pull re-imports txs from lagging peers that haven't adopted
+    /// our latest block yet, and they get mined a second time (double
+    /// mint/spend). Returns newly added count.
     pub fn merge_pending_raw(&mut self, raws: Vec<Vec<u8>>) -> usize {
         let confirmed: std::collections::HashSet<Vec<u8>> = self
             .chain
@@ -621,6 +667,10 @@ impl BlockChain {
                 continue;
             };
             if tx.value == 0 || tx.sender_address == tx.reciever_address {
+                continue;
+            }
+            // Forged spends die here even if the economics would allow them.
+            if Self::verify_onchain_tx(&tx).is_err() {
                 continue;
             }
             let mint_id = Self::MINING_SENDER.as_bytes().to_vec();
@@ -666,6 +716,22 @@ mod tests {
         .serialization()
     }
 
+    /// On-chain raw form of a transfer actually signed by `w`. The signature
+    /// is valid — tests use these to prove that bad *economics* (overspend,
+    /// double-spend, zero value, self-transfer) are rejected even when the
+    /// cryptography checks out.
+    fn signed_raw(w: &Wallet, recipient: &str, amount: u64) -> Vec<u8> {
+        let wt = w.sign_transaction(&recipient.to_string(), amount);
+        Transaction::signed(
+            wt.sender.into_bytes(),
+            wt.recipeint.into_bytes(),
+            wt.amount,
+            hex::decode(wt.public_key).unwrap(),
+            hex::decode(wt.signature).unwrap(),
+        )
+        .serialization()
+    }
+
     /// Stuff raw txs straight into the pool (bypasses entry checks) and mine
     /// them into a block. Lets tests craft overspending / zero-value /
     /// self-transfer chains that `add_transaction` would refuse.
@@ -691,6 +757,15 @@ mod tests {
     fn funded(addr: &str) -> BlockChain {
         let mut bc = miner_chain();
         bc.faucet(addr.to_string(), 100).unwrap();
+        bc.mining();
+        bc
+    }
+
+    /// Fresh chain where wallet `w` owns exactly 100 confirmed coins
+    /// (so tests can sign spends from it).
+    fn fund_wallet(w: &Wallet) -> BlockChain {
+        let mut bc = miner_chain();
+        bc.faucet(w.address_str(), 100).unwrap();
         bc.mining();
         bc
     }
@@ -738,18 +813,20 @@ mod tests {
 
     #[test]
     fn chain_rejects_overspend() {
-        let mut bc = funded("alice"); // alice owns 100
-        mine_with(&mut bc, vec![raw_tx("alice", "bob", 1000)]);
+        let w = Wallet::new();
+        let mut bc = fund_wallet(&w); // owns 100
+        mine_with(&mut bc, vec![signed_raw(&w, "bob", 1000)]);
         let err = BlockChain::validate_chain(bc.get_chain()).unwrap_err();
         assert!(err.contains("overspend"), "unexpected: {err}");
     }
 
     #[test]
     fn chain_rejects_double_spend() {
-        let mut bc = funded("alice"); // alice owns 100
+        let w = Wallet::new();
+        let mut bc = fund_wallet(&w); // owns 100
         mine_with(
             &mut bc,
-            vec![raw_tx("alice", "bob", 60), raw_tx("alice", "carol", 60)],
+            vec![signed_raw(&w, "bob", 60), signed_raw(&w, "carol", 60)],
         );
         let err = BlockChain::validate_chain(bc.get_chain()).unwrap_err();
         assert!(err.contains("overspend"), "unexpected: {err}");
@@ -757,18 +834,39 @@ mod tests {
 
     #[test]
     fn chain_rejects_zero_value() {
-        let mut bc = funded("alice");
-        mine_with(&mut bc, vec![raw_tx("alice", "bob", 0)]);
+        let w = Wallet::new();
+        let mut bc = fund_wallet(&w);
+        mine_with(&mut bc, vec![signed_raw(&w, "bob", 0)]);
         let err = BlockChain::validate_chain(bc.get_chain()).unwrap_err();
         assert!(err.contains("zero-value"), "unexpected: {err}");
     }
 
     #[test]
     fn chain_rejects_self_transfer() {
-        let mut bc = funded("alice");
-        mine_with(&mut bc, vec![raw_tx("alice", "alice", 5)]);
+        let w = Wallet::new();
+        let mut bc = fund_wallet(&w);
+        let addr = w.address_str();
+        mine_with(&mut bc, vec![signed_raw(&w, &addr, 5)]);
         let err = BlockChain::validate_chain(bc.get_chain()).unwrap_err();
         assert!(err.contains("self-transfer"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn chain_rejects_forged_signature() {
+        // Well-formed but unsignable: random 64-byte key/signature that no
+        // wallet ever produced. Pre-S2 this validated; now it must not.
+        let mut bc = funded("alice");
+        let forged = Transaction::signed(
+            b"alice".to_vec(),
+            b"bob".to_vec(),
+            10,
+            vec![7u8; 64],
+            vec![9u8; 64],
+        )
+        .serialization();
+        mine_with(&mut bc, vec![forged]);
+        let err = BlockChain::validate_chain(bc.get_chain()).unwrap_err();
+        assert!(err.contains("signature"), "unexpected: {err}");
     }
 
     #[test]
@@ -875,9 +973,11 @@ mod tests {
 
     #[test]
     fn merge_skips_zero_value_and_self_transfer() {
-        let mut bc = miner_chain();
+        let w = Wallet::new();
+        let mut bc = fund_wallet(&w);
+        let addr = w.address_str();
         assert_eq!(
-            bc.merge_pending_raw(vec![raw_tx("a", "b", 0), raw_tx("a", "a", 5)]),
+            bc.merge_pending_raw(vec![signed_raw(&w, "b", 0), signed_raw(&w, &addr, 5)]),
             0
         );
         assert_eq!(bc.pending_count(), 0);
@@ -885,9 +985,10 @@ mod tests {
 
     #[test]
     fn merge_skips_overspend_but_accepts_affordable() {
-        let mut bc = funded("alice"); // alice owns 100
-        assert_eq!(bc.merge_pending_raw(vec![raw_tx("alice", "bob", 101)]), 0);
-        assert_eq!(bc.merge_pending_raw(vec![raw_tx("alice", "bob", 100)]), 1);
+        let w = Wallet::new();
+        let mut bc = fund_wallet(&w); // owns 100
+        assert_eq!(bc.merge_pending_raw(vec![signed_raw(&w, "bob", 101)]), 0);
+        assert_eq!(bc.merge_pending_raw(vec![signed_raw(&w, "bob", 100)]), 1);
         assert_eq!(bc.pending_count(), 1);
     }
 
@@ -898,24 +999,34 @@ mod tests {
         let mut a = miner_chain();
         a.faucet(w.address_str(), 50).unwrap();
         a.mining();
-        let wt = w.sign_transaction(&"recipient-x".to_string(), 20);
-        let raw = Transaction::new(
-            wt.sender.into_bytes(),
-            wt.recipeint.into_bytes(),
-            wt.amount,
-        )
-        .serialization();
 
         let mut b = miner_chain();
         b.faucet(w.address_str(), 50).unwrap();
         b.mining();
-        assert_eq!(b.merge_pending_raw(vec![raw]), 1);
+        assert_eq!(b.merge_pending_raw(vec![signed_raw(&w, "recipient-x", 20)]), 1);
+    }
+
+    #[test]
+    fn merge_rejects_forged_peer_tx() {
+        // Affordable economics, garbage signature: gossip must not launder it.
+        let mut bc = funded("alice"); // alice owns 100
+        let forged = Transaction::signed(
+            b"alice".to_vec(),
+            b"bob".to_vec(),
+            10,
+            vec![7u8; 64],
+            vec![9u8; 64],
+        )
+        .serialization();
+        assert_eq!(bc.merge_pending_raw(vec![forged]), 0);
+        assert_eq!(bc.pending_count(), 0);
     }
 
     #[test]
     fn replace_drops_confirmed_pool_but_keeps_unconfirmed() {
-        let mut a = funded("alice"); // h3, alice owns 100
-        let spend = raw_tx("alice", "bob", 30);
+        let w = Wallet::new();
+        let mut a = fund_wallet(&w); // h3, owns 100
+        let spend = signed_raw(&w, "bob", 30);
         a.transactions_pool.push(spend.clone());
         assert_eq!(a.pending_count(), 1);
 
@@ -932,7 +1043,7 @@ mod tests {
         assert!(BlockChain::validate_chain(a.get_chain()).is_ok());
 
         // Peer chain not containing the spend: adopt, pool entry must stay.
-        let mut a = funded("alice");
+        let mut a = fund_wallet(&w);
         a.transactions_pool.push(spend);
         let mut longer = BlockChain::new("miner-addr".to_string());
         longer.chain = a.get_chain().clone();
@@ -961,8 +1072,9 @@ mod tests {
 
     #[test]
     fn fork_choice_rejects_taller_invalid_chain() {
-        let mut b = funded("alice");
-        mine_with(&mut b, vec![raw_tx("alice", "bob", 10_000)]); // overspends
+        let w = Wallet::new();
+        let mut b = fund_wallet(&w);
+        mine_with(&mut b, vec![signed_raw(&w, "bob", 10_000)]); // overspends
         let mut a = miner_chain();
         let (height, tip) = (a.height(), a.tip_hash());
         let err = a

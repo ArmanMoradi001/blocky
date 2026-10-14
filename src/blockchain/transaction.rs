@@ -8,14 +8,39 @@ pub struct Transaction {
     pub sender_address: Vec<u8>,
     pub reciever_address: Vec<u8>,
     pub value: u64,
+    /// Raw 64-byte secp256r1 public key (x || y). Empty for mints, which
+    /// carry no signature (`BlockChain::MINING_SENDER`).
+    pub public_key: Vec<u8>,
+    /// Raw 64-byte ECDSA signature (r || s). Empty for mints.
+    pub signature: Vec<u8>,
 }
 
 impl Transaction {
+    /// Mint-shaped transaction: no signature (only `MINING_SENDER` may use it).
     pub fn new(sender: Vec<u8>, reciever: Vec<u8>, value: u64) -> Self {
         Transaction {
             sender_address: sender,
             reciever_address: reciever,
             value,
+            public_key: Vec::new(),
+            signature: Vec::new(),
+        }
+    }
+
+    /// Signed transfer, as verified at entry and persisted on-chain.
+    pub fn signed(
+        sender: Vec<u8>,
+        reciever: Vec<u8>,
+        value: u64,
+        public_key: Vec<u8>,
+        signature: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            sender_address: sender,
+            reciever_address: reciever,
+            value,
+            public_key,
+            signature,
         }
     }
 
@@ -52,6 +77,30 @@ impl Transaction {
         let value = u64::from_be_bytes(bytes[pos..pos + 8].try_into().ok()?);
         pos += 8;
 
+        if bytes.len() < pos + 8 {
+            return None;
+        }
+        let pubkey_len = u64::from_be_bytes(bytes[pos..pos + 8].try_into().ok()?) as usize;
+        pos += 8;
+        // Raw P-256 keys are 64 bytes; the cap leaves headroom without
+        // accepting unbounded blobs.
+        if pubkey_len > 256 || bytes.len() < pos + pubkey_len {
+            return None;
+        }
+        let public_key = bytes[pos..pos + pubkey_len].to_vec();
+        pos += pubkey_len;
+
+        if bytes.len() < pos + 8 {
+            return None;
+        }
+        let sig_len = u64::from_be_bytes(bytes[pos..pos + 8].try_into().ok()?) as usize;
+        pos += 8;
+        if sig_len > 256 || bytes.len() < pos + sig_len {
+            return None;
+        }
+        let signature = bytes[pos..pos + sig_len].to_vec();
+        pos += sig_len;
+
         if pos != bytes.len() {
             return None;
         }
@@ -60,6 +109,8 @@ impl Transaction {
             sender_address,
             reciever_address,
             value,
+            public_key,
+            signature,
         })
     }
 }
@@ -77,6 +128,14 @@ impl Serialization<Transaction> for Transaction {
         bin.extend(&self.reciever_address);
 
         bin.extend(self.value.to_be_bytes());
+
+        let pubkey_len = self.public_key.len() as u64;
+        bin.extend(pubkey_len.to_be_bytes());
+        bin.extend(&self.public_key);
+
+        let sig_len = self.signature.len() as u64;
+        bin.extend(sig_len.to_be_bytes());
+        bin.extend(&self.signature);
 
         bin
     }
