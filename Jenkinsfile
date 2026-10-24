@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    environment {
+    PATH+RUST = '/var/lib/jenkins/.cargo/bin'
+}
+
     options {
         timestamps()
         timeout(time: 20, unit: 'MINUTES')
