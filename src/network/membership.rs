@@ -120,14 +120,23 @@ pub struct Membership {
 
 impl Membership {
     /// Bind the UDP socket and register self as `Alive(0)`.
+    ///
+    /// `bind_addr` is the local socket address (e.g. `0.0.0.0:15000` in
+    /// Docker so the port is reachable from outside the container).
+    /// `advertise_addr` is the address peers use to dial us back — it must
+    /// be routable (a container IP, service name IP, or loopback IP when
+    /// all nodes share one netns). The two differ only when crossing a
+    /// network namespace boundary.
     pub async fn bind(
-        self_addr: SocketAddr,
+        bind_addr: SocketAddr,
+        advertise_addr: SocketAddr,
         seeds: Vec<SocketAddr>,
         config: MembershipConfig,
     ) -> Arc<Self> {
-        let socket = UdpSocket::bind(self_addr)
+        let socket = UdpSocket::bind(bind_addr)
             .await
             .expect("membership: failed to bind UDP socket");
+        let self_addr = advertise_addr;
         let this = Arc::new(Self {
             self_addr,
             seeds,
@@ -145,7 +154,10 @@ impl Membership {
             pending: Mutex::new(HashMap::new()),
             recent: Mutex::new(VecDeque::new()),
         });
-        info!("membership: {self_addr} listening, seeds={:?}", this.seeds);
+        info!(
+            "membership: advertise={self_addr} bind={bind_addr} seeds={:?}",
+            this.seeds
+        );
         this
     }
 
