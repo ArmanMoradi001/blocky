@@ -1,0 +1,44 @@
+# 3-node cluster: one container per node. Each container runs a single
+# node (BLOCKY_UDP_ADVERTISE set); gossip + Nakamoto sync keep them converged.
+# HTTP stays on the default port 5000 inside every container; the host mapping
+# (5001/5002/5003) is what you curl. UDP advertise/seed names use Compose DNS;
+# the code resolves them to container IPs at startup.
+services:
+  node1:
+    build: .
+    hostname: node1
+    ports:
+      - "5001:5000/tcp"
+      - "15001:15000/udp"
+    environment:
+      BLOCKY_HTTP_HOST: "0.0.0.0"
+      BLOCKY_HTTP_PORT: "5000"
+      BLOCKY_UDP_BIND: "0.0.0.0:15000"
+      BLOCKY_UDP_ADVERTISE: "node1:15000"
+      BLOCKY_SEEDS: "node2:15000,node3:15000"
+
+  node2:
+    build: .
+    hostname: node2
+    ports:
+      - "5002:5000/tcp"
+      - "15002:15000/udp"
+    environment:
+      BLOCKY_HTTP_HOST: "0.0.0.0"
+      BLOCKY_HTTP_PORT: "5000"
+      BLOCKY_UDP_BIND: "0.0.0.0:15000"
+      BLOCKY_UDP_ADVERTISE: "node2:15000"
+      BLOCKY_SEEDS: "node1:15000,node3:15000"
+
+  node3:
+    build: .
+    hostname: node3
+    ports:
+      - "5003:5000/tcp"
+      - "15003:15000/udp"
+    environment:
+      BLOCKY_HTTP_HOST: "0.0.0.0"
+      BLOCKY_HTTP_PORT: "5000"
+      BLOCKY_UDP_BIND: "0.0.0.0:15000"
+      BLOCKY_UDP_ADVERTISE: "node3:15000"
+      BLOCKY_SEEDS: "node1:15000,node2:15000"
