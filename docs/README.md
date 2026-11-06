@@ -13,6 +13,7 @@ Section-by-section guide to the codebase. Start here, then read the section you 
 | `blockchain.md`       | Chain, blocks, proof-of-work, mempool, faucet                 |
 | `wallet.md`           | Keys, addresses, signing and verification                     |
 | `crypto.md`           | Standalone signing demo helper                                |
+| `docker.md`           | Docker image/compose setup — and why it is not recommended    |
 
 ## Reading order for newcomers
 

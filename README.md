@@ -73,6 +73,24 @@ With logs:
 RUST_LOG=info cargo run
 ```
 
+## Docker (not recommended)
+
+The project is dockerized (`Dockerfile`, `docker-compose.yml` — 3 nodes,
+one container each, see `docs/docker.md` for the setup and env vars):
+
+```bash
+docker compose up --build -d
+curl localhost:5001/peers
+```
+
+But we do **not** recommend running it this way. This is a local-dev
+blockchain simulator: all state is in-memory (a restarted container loses
+its ledger), the 3-in-1-process default exists so you can watch gossip and
+Nakamoto sync on loopback with zero setup, and the HTTP API is plain HTTP
+with a key-dispensing `/get_wallet` meant for loopback only. Docker adds
+UDP port-mapping, bind-vs-advertise address, and toolchain-drift friction
+for no benefit. Prefer `cargo run`.
+
 ## Wallet dashboard
 
 Open `http://127.0.0.1:5000/wallet` and follow the steps on the page:
