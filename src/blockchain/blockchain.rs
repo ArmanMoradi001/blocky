@@ -7,7 +7,7 @@ use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::ops::{AddAssign, Index};
 use std::time::Instant;
-use std::{iter::chain, time::SystemTime};
+use std::time::SystemTime;
 
 use super::transaction::Transaction;
 use crate::wallet::wallet::{Transaction as WalletTransaction, Wallet};
